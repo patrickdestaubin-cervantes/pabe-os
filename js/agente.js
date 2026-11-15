@@ -109,9 +109,9 @@ function listen() {
   rec = new SR(); rec.lang = 'es-ES'; rec.interimResults = true; rec.continuous = false;
   let final = '';
   rec.onresult = e => { let t = ''; for (const r of e.results) t += r[0].transcript; final = t; $('#agIn').value = t; };
-  rec.onend = () => { listening = false; $('#agMic').classList.remove('on'); $('#agFab').classList.remove('on'); if (final.trim()) { $('#agIn').value = ''; send(final, true); } };
-  rec.onerror = e => { listening = false; $('#agMic').classList.remove('on'); $('#agFab').classList.remove('on'); if (e.error === 'not-allowed') bubble('err', 'Permite el micrófono para PABE en los ajustes del navegador.'); };
-  speechSynthesis?.cancel(); rec.start(); listening = true; $('#agMic').classList.add('on'); $('#agFab').classList.add('on');
+  rec.onend = () => { listening = false; $('#agMic').classList.remove('on'); if (final.trim()) { $('#agIn').value = ''; send(final, true); } };
+  rec.onerror = e => { listening = false; $('#agMic').classList.remove('on'); if (e.error === 'not-allowed') bubble('err', 'Permite el micrófono para PABE en los ajustes del navegador.'); };
+  speechSynthesis?.cancel(); rec.start(); listening = true; $('#agMic').classList.add('on');
 }
 
 /* ---------- ajustes ---------- */
@@ -131,18 +131,18 @@ function openSettings(msg = '') {
 export function mountAgent() {
   const el = document.createElement('div');
   el.innerHTML = `
-  <button id="agFab" class="ag-fab" aria-label="Preguntar al asistente" title="Asistente (mantén pulsado para hablar)"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg></button>
+  <button id="agFab" class="ag-fab" aria-label="Asistente de PABE" title="Asistente (Ctrl+J)"><svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.5l1.9 5.6 5.6 1.9-5.6 1.9L12 17.5l-1.9-5.6L4.5 10l5.6-1.9z"/><path d="M18.5 15l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8z"/></svg></button>
   <section id="agPanel" class="ag-panel" hidden aria-label="Asistente de PABE">
    <header><b>Asistente</b><span class="sp"></span><button id="agNew" class="ag-ic" title="Nueva conversación" aria-label="Nueva conversación">＋</button><button id="agGear" class="ag-ic" title="Ajustes" aria-label="Ajustes">⚙</button><button id="agClose" class="ag-ic" aria-label="Cerrar">×</button></header>
    <div id="agLog" class="ag-log"></div>
    <div id="agSet" class="ag-set" hidden></div>
-   <form id="agForm" class="ag-form"><input id="agIn" placeholder="Escribe o pulsa el micrófono" autocomplete="off"><button type="button" id="agMic" class="ag-mic" aria-label="Hablar"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg></button><button class="ag-send" aria-label="Enviar">↑</button></form>
+   <form id="agForm" class="ag-form"><input id="agIn" placeholder="Pregúntame algo…" autocomplete="off"><button type="button" id="agMic" class="ag-mic" aria-label="Hablar"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></svg></button><button class="ag-send" aria-label="Enviar">↑</button></form>
   </section>`;
   document.body.appendChild(el);
   const panel = $('#agPanel');
   const open = () => { panel.hidden = false; renderLog(); if (!L.get('key', '')) openSettings(); };
   // Tocar: abre y empieza a escuchar. Si ya está abierto: escuchar / parar.
-  $('#agFab').onclick = () => { if (panel.hidden) { open(); if (L.get('key', '')) listen(); } else listen(); };
+  $('#agFab').onclick = () => { if (panel.hidden) { open(); setTimeout(() => $('#agIn').focus(), 50); } else { panel.hidden = true; rec?.stop(); } };
   $('#agClose').onclick = () => { panel.hidden = true; rec?.stop(); speechSynthesis?.cancel(); };
   $('#agGear').onclick = () => $('#agSet').hidden ? openSettings() : ($('#agSet').hidden = true);
   $('#agNew').onclick = () => { msgs = []; L.set('msgs', msgs); renderLog(); };

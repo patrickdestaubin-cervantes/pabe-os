@@ -44,7 +44,7 @@ async function boot() {
   on('sync', paintSync); drive.onAuth(ok => { paintSync(); if (ok) syncNow(); });
   paintSync();
   $('#drv').onclick = async () => {
-    if (!drive.configured) return;
+    if (!drive.configured) { const t = document.getElementById('toast'); t.textContent = 'Aún no está conectado a tu Drive: cada dispositivo guarda solo lo suyo'; t.classList.add('on'); setTimeout(() => t.classList.remove('on'), 4000); return; }
     if (!drive.ready) { const ok = await drive.signIn(!drive.hadSession() ? false : true); if (!ok) { const ok2 = await drive.signIn(false); if (!ok2) return; } }
     syncNow();
   };

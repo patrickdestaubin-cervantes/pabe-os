@@ -33,6 +33,7 @@ const HTML = `
  <button class="tl" data-k="mark" title="Rotulador" aria-label="Rotulador"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"><path d="M9.5 15.5L5 20h4l2.5-2.5"/><path d="M8 13.5L16.5 4l3.5 3.5L10.5 16z"/></svg></button>
  <span class="sepr"></span>${PENS.map(p => `<button class="sw" data-pen="${p[0]}" style="--c:${p[0] === 'ink' ? 'var(--ink)' : p[1]}" aria-label="Color"><b></b></button>`).join('')}
  <span class="sepr"></span>
+ <button class="tl" id="ntText" title="Escribir con el teclado" aria-label="Escribir con el teclado"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 6V4h14v2M12 4v16M9 20h6"/></svg></button>
  <button class="tl" id="ntEraser" title="Borrador (el botón del lápiz también borra)" aria-label="Borrador"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M8 20h12M4.5 14.5l9-9a2 2 0 0 1 3 0l2 2a2 2 0 0 1 0 3l-8 8H8z"/></svg></button>
  <button class="tl" id="ntShapes" aria-label="Reconocer formas"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8.5" cy="8.5" r="4.5"/><rect x="12" y="12" width="8" height="8" rx="1"/></svg></button>
  <span class="sepr"></span>
@@ -166,7 +167,7 @@ const baseW = () => KINDS[kind].w / cam.k;
 function fw(e, v) { const pr = e.pointerType === 'pen' && e.pressure > 0 ? Math.min(1.3, Math.pow(e.pressure, .75) * 1.3) : Math.max(.3, Math.min(1.1, 1.15 - v * .45)); return baseW() * (.28 + 1.05 * pr); }
 function newStroke(w, e) { const s = { id: gid(), t: 's', k: kind, c: pen, w: rd2(baseW()) }; if (kind === 'fount') { s.v = 2; s.p = [rd(w.x), rd(w.y), rd2(fw(e, 0) * .7)]; } else s.p = [rd(w.x), rd(w.y)]; return s; }
 function cancelAct() { if (act && act.k === 'draw') { cur.doc.tabs[cur.tab] = items().filter(i => i !== act.s); act.el.remove(); hist.pop(); } act = null; }
-function tapAt(e) { const w = toW(e); if (isDouble(e, 'bg')) addText(w); else showCaret(w); }
+function tapAt(e) { const w = toW(e); if (e.pointerType === 'touch') { addText(w); return; } if (isDouble(e, 'bg')) addText(w); else showCaret(w); }
 
 function onDown(e) {
   if (e.target.closest('button,a') || e.target.closest('.tx[contenteditable=true]')) return;
@@ -354,6 +355,7 @@ export async function mount(el, opts = {}) {
     if (b.dataset.pen) { pen = b.dataset.pen; eraser = false; L.set('pen', pen); }
     if (b.id === 'ntEraser') eraser = !eraser;
     if (b.id === 'ntShapes') { shapes = !shapes; L.set('shapes', shapes); flash(shapes ? 'Formas: se convierten en limpias' : 'Formas: se quedan a mano'); }
+    if (b.id === 'ntText') { addText(caretW || lastW || centerW()); return; }
     if (b.id === 'ntUndo') undo();
     if (b.id === 'ntTrash') delSel();
     syncTools();
