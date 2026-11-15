@@ -427,3 +427,71 @@ function active() { return isActive(); }
 export function setActiveCheck(fn) { isActive = fn; }
 export function enter() { closeLib(); newNote(); }
 export function leave() { saveNow(); }
+
+/* =================== herramientas para el asistente =================== */
+const fmt = new Intl.DateTimeFormat('es-ES', { day: 'numeric', month: 'short', year: 'numeric' });
+const nrm = s => String(s ?? '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+const areaNames = m => (m.tags || []).map(id => tags.get(SYS, id)?.nombre).filter(Boolean);
+function areaIds(names = [], create = true) {
+  return names.map(n => {
+    let t = tags.list(SYS).find(x => nrm(x.nombre) === nrm(n));
+    if (!t && create) t = tags.add(SYS, n.trim(), pickColor(SYS));
+    return t?.id;
+  }).filter(Boolean);
+}
+const brief = m => ({ id: m.id, titulo: m.title || 'Sin título', fecha: fmt.format(m.created), editada: fmt.format(m.updated || m.created), areas: areaNames(m), archivos: (m.files || []).map(f => f.n), extracto: (m.text || (m.ink ? '[solo dibujo a mano]' : '')).slice(0, 300) });
+
+export const agentDef = {
+  nombre: 'Notas',
+  context: () => cur ? `Nota abierta: «${cur.meta.title || 'Sin título'}» (id ${cur.meta.id}${cur.saved ? '' : ', aún vacía'}), áreas: ${areaNames(cur.meta).join(', ') || 'ninguna'}. Hay ${col.list().length} notas guardadas.` : '',
+  tools: [
+    { name: 'buscar_notas', label: 'Buscando en tus notas', description: 'Busca notas por texto (título, contenido tecleado, áreas, nombres de archivo), por área y/o por fechas. Devuelve hasta 25, de la más reciente a la más antigua.',
+      input_schema: { type: 'object', properties: { texto: { type: 'string', description: 'Palabras a buscar (opcional)' }, area: { type: 'string', description: 'Nombre del área (opcional)' }, desde: { type: 'string', description: 'Fecha AAAA-MM-DD (opcional)' }, hasta: { type: 'string', description: 'Fecha AAAA-MM-DD (opcional)' } } },
+      run: ({ texto, area, desde, hasta }) => {
+        saveNow(); let a = col.list();
+        if (area) { const ids = areaIds([area], false); a = a.filter(m => (m.tags || []).some(t => ids.includes(t))); }
+        if (desde) a = a.filter(m => m.created >= new Date(desde + 'T00:00').getTime());
+        if (hasta) a = a.filter(m => m.created <= new Date(hasta + 'T23:59').getTime());
+        if (texto) { const w = nrm(texto).split(/\s+/).filter(Boolean); a = a.filter(m => { const h = nrm([m.title, m.text, areaNames(m).join(' '), (m.files || []).map(f => f.n).join(' ')].join(' ')); return w.every(x => h.includes(x)); }); }
+        a.sort((x, y) => (y.updated || y.created) - (x.updated || x.created));
+        return { total: a.length, notas: a.slice(0, 25).map(brief) };
+      } },
+    { name: 'leer_nota', label: 'Leyendo la nota', description: 'Lee una nota completa: título, áreas, pestañas con su texto tecleado y archivos.',
+      input_schema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
+      run: async ({ id }) => {
+        saveNow(); const m = col.index.get(id); if (!m || m.deleted) return { error: 'No existe esa nota' };
+        const d = (cur && cur.meta.id === id) ? cur.doc : (await col.load(id)) || { tabs: {} };
+        return { ...brief(m), pestañas: m.tabs.map(t => { const it = d.tabs[t.id] || []; return { nombre: t.name, texto: it.filter(i => i.t === 'x').map(i => i.s).join('\n'), archivos: it.filter(i => i.f).map(i => i.f.n), dibujos_a_mano: it.filter(i => i.t === 's').length }; }) };
+      } },
+    { name: 'crear_nota', label: 'Creando la nota', description: 'Crea una nota nueva con título, texto opcional y áreas (si un área no existe, se crea con un color libre). Por defecto la abre en pantalla.',
+      input_schema: { type: 'object', properties: { titulo: { type: 'string' }, texto: { type: 'string' }, areas: { type: 'array', items: { type: 'string' } }, abrir: { type: 'boolean' } }, required: ['titulo'] },
+      run: async ({ titulo, texto, areas = [], abrir = true }) => {
+        const t = gid(), m = { id: gid(), title: titulo, tags: areaIds(areas), tabs: [{ id: t, name: 'Hoja 1' }], created: Date.now(), text: '', files: [], valores: {} };
+        const items = texto ? [{ id: gid(), t: 'x', x: 80, y: 120, s: texto, z: 18 }] : [];
+        m.text = texto || ''; await col.put(m, { tabs: { [t]: items } });
+        if (abrir) await openNote(m.id);
+        return { ok: true, id: m.id, areas: areaNames(m) };
+      } },
+    { name: 'escribir_en_nota_abierta', label: 'Escribiendo en la nota', description: 'Añade un bloque de texto en el lienzo de la nota que Patrick tiene abierta, debajo de lo que ya hay.',
+      input_schema: { type: 'object', properties: { texto: { type: 'string' } }, required: ['texto'] },
+      run: ({ texto }) => {
+        const a = items(); const maxY = a.reduce((y, i) => Math.max(y, (i.y || 0) + (i.t === 'x' ? (i.z || 18) * 1.4 * (String(i.s).split('\n').length) : i.t === 's' ? 0 : 60)), 60);
+        const strokesY = a.filter(i => i.t === 's').reduce((y, s) => { const st = s.v === 2 ? 3 : 2; for (let k = 1; k < s.p.length; k += st) y = Math.max(y, s.p[k]); return y; }, 0);
+        snap(); a.push({ id: gid(), t: 'x', x: 80, y: rd(Math.max(maxY, strokesY) + 30), s: texto, z: 18 }); cur.saved = cur.saved || false; renderItems(); dirty();
+        return { ok: true, nota: cur.meta.title || 'Sin título' };
+      } },
+    { name: 'poner_areas', label: 'Poniendo áreas', description: 'Cambia las áreas de una nota (lista completa de nombres; las que no existan se crean).',
+      input_schema: { type: 'object', properties: { id: { type: 'string' }, areas: { type: 'array', items: { type: 'string' } } }, required: ['id', 'areas'] },
+      run: ({ id, areas }) => {
+        const ids = areaIds(areas);
+        if (cur && cur.meta.id === id) { cur.meta.tags = ids; renderChips(); dirty(); return { ok: true }; }
+        const m = col.index.get(id); if (!m) return { error: 'No existe esa nota' }; col.put({ ...m, tags: ids }); return { ok: true };
+      } },
+    { name: 'abrir_nota', label: 'Abriendo la nota', description: 'Abre una nota en pantalla.',
+      input_schema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
+      run: async ({ id }) => { if (!col.index.get(id)) return { error: 'No existe esa nota' }; await openNote(id); return { ok: true }; } },
+    { name: 'listar_areas', label: 'Mirando tus áreas', description: 'Lista las áreas existentes y cuántas notas tiene cada una.',
+      input_schema: { type: 'object', properties: {} },
+      run: () => ({ areas: tags.list(SYS).map(t => ({ nombre: t.nombre, notas: col.list().filter(m => (m.tags || []).includes(t.id)).length })) }) },
+  ]
+};

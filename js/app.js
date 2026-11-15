@@ -2,6 +2,7 @@
 import { drive } from './drive.js';
 import { on, sync, syncNow } from './store.js';
 import * as notas from './modules/notas.js';
+import { agente, mountAgent } from './agente.js';
 
 const $ = s => document.querySelector(s);
 const MODS = {
@@ -37,6 +38,7 @@ async function boot() {
   addEventListener('hashchange', () => go(location.hash.slice(1)));
   notas.setActiveCheck(() => current === 'notas');
   await notas.mount(document.querySelector('[data-view=notas]'));
+  agente.register('notas', notas.agentDef); agente.setCurrent(() => current || 'notas'); mountAgent();
   go(location.hash.slice(1) || 'notas');
 
   on('sync', paintSync); drive.onAuth(ok => { paintSync(); if (ok) syncNow(); });
