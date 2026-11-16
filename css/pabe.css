@@ -220,3 +220,5 @@ tr:hover .tb-open{display:block}.tb-open:hover{color:var(--ink)}
 .tbl .tb td{height:44px}.tbl .tb td.tb-c{padding:10px 12px}
 .tbl .tb-in{height:43px}
 .tbl .tb-cards{display:none!important}.tbl .tb-wrap{display:block!important}
+
+.tb td.tb-opens{cursor:pointer}.tb td.tb-opens:hover .tb-ttl{text-decoration-color:var(--ink)}

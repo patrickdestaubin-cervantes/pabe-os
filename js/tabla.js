@@ -119,7 +119,7 @@ export function createTable(el, cfg) {
   function cell(r, p) {
     const v = val(r, p);
     switch (p.tipo) {
-      case 'title': return `<span class="tb-ttl">${esc(v) || '<span class="tb-ph">Sin título</span>'}</span><button class="tb-open" data-open>Abrir</button>`;
+      case 'title': return `<span class="tb-ttl">${esc(v) || '<span class="tb-ph">Sin título</span>'}</span>${p.opens ? '' : '<button class="tb-open" data-open>Abrir</button>'}`;
       case 'number': return v === '' || v == null ? '' : fmtN.format(+v);
       case 'money': return v === '' || v == null ? '' : `<span class="${+v < 0 ? 'tb-neg' : +v > 0 && p.sign ? 'tb-pos' : ''}">${fmtM.format(+v)}</span>`;
       case 'date': return v ? fmtD.format(toDate(v)) : '';
@@ -141,7 +141,7 @@ export function createTable(el, cfg) {
     const sortChip = P.sort ? (() => { const p = allProps().find(x => x.id === P.sort.id); return p ? `<span class="tb-fchip tb-sortchip"><button data-sortflip>${P.sort.dir > 0 ? '↑' : '↓'} ${esc(p.nombre)}</button><button class="tb-x" data-sortdel aria-label="Quitar orden">×</button></span>` : ''; })() : '';
     const cols = vis.map(p => `<col style="width:${P.widths[p.id] || (p.tipo === 'title' ? 260 : p.tipo === 'content' ? 320 : p.tipo === 'check' ? 90 : 170)}px">`).join('');
     const head = vis.map(p => `<th data-prop="${p.id}" draggable="true"><button class="tb-th"><span class="tb-ti">${TYPES[p.tipo]?.i || ''}</span>${esc(p.nombre)}${P.sort?.id === p.id ? (P.sort.dir > 0 ? ' ↑' : ' ↓') : ''}</button><span class="tb-rz" data-rz="${p.id}"></span></th>`).join('');
-    const body = rs.map(r => `<tr data-row="${esc(r.id)}"><td class="tb-h"><button class="tb-grip" data-rmenu aria-label="Acciones">⋮⋮</button></td>${vis.map(p => `<td data-cell="${p.id}" tabindex="0" class="tb-c tb-${p.tipo}${p.readonly ? ' ro' : ''}">${cell(r, p)}</td>`).join('')}<td></td></tr>`).join('');
+    const body = rs.map(r => `<tr data-row="${esc(r.id)}"><td class="tb-h"><button class="tb-grip" data-rmenu aria-label="Acciones">⋮⋮</button></td>${vis.map(p => `<td data-cell="${p.id}" tabindex="0" class="tb-c tb-${p.tipo}${p.readonly ? ' ro' : ''}${p.opens ? ' tb-opens' : ''}">${cell(r, p)}</td>`).join('')}<td></td></tr>`).join('');
     const calc = vis.map(p => `<td><button class="tb-calc" data-calc="${p.id}">${calcText(p, rs) || '<span>Calcular</span>'}</button></td>`).join('');
     const cards = rs.map(r => { const t = vis.find(p => p.tipo === 'title'); const rest = vis.filter(p => p !== t && p.tipo !== 'content').slice(0, 4); return `<div class="tb-card" data-row="${esc(r.id)}"><div class="tb-cardt">${t ? esc(val(r, t)) || 'Sin título' : ''}</div>${rest.map(p => { const h = cell(r, p); return h && p.tipo !== 'check' ? `<div class="tb-cardp"><span>${esc(p.nombre)}</span><span>${h}</span></div>` : ''; }).join('')}</div>`; }).join('');
     el.innerHTML = `
@@ -357,7 +357,8 @@ export function createTable(el, cfg) {
     if (b?.dataset.file != null && b.classList.contains('tb-file')) { const tr = b.closest('[data-row]'), r = rowById(tr.dataset.row), p = allProps().find(x => x.id === b.closest('td').dataset.cell); cfg.openFile?.(r, (val(r, p) || [])[+b.dataset.file]); return; }
     if (t.closest('a')) return;
     const card = t.closest('.tb-card'); if (card) { cfg.open(rowById(card.dataset.row)); return; }
-    const td = t.closest('td.tb-c'); if (td && !td.classList.contains('editing')) startEdit(td);
+    const td = t.closest('td.tb-c'); if (td && td.classList.contains('tb-opens')) { cfg.open(rowById(td.closest('tr').dataset.row)); return; }
+    if (td && !td.classList.contains('editing')) startEdit(td);
   });
   el.addEventListener('keydown', e => {
     const td = e.target.closest?.('td.tb-c'); if (td && e.target === td && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); startEdit(td); }
