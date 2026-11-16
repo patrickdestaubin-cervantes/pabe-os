@@ -6,10 +6,13 @@ const UP = 'https://www.googleapis.com/upload/drive/v3';
 let token = null, exp = 0, client = null, waiters = [], granted = '';
 const listeners = new Set();
 
-try { const t = JSON.parse(sessionStorage.getItem('pabe:tok') || 'null'); if (t && t.exp > Date.now() + 60000 && (t.scope || '').includes('drive.appdata')) { token = t.token; exp = t.exp; granted = t.scope; } } catch (e) {}
+try { const t = JSON.parse(localStorage.getItem('pabe:tok') || sessionStorage.getItem('pabe:tok') || 'null'); if (t && t.exp > Date.now() + 60000 && (t.scope || '').includes('drive.appdata')) { token = t.token; exp = t.exp; granted = t.scope; } } catch (e) {}
 
 export const drive = {
   get ready() { return !!token && exp > Date.now() + 30000; },
+  // quedan menos de 10 minutos de permiso (o ya caducó): conviene renovarlo en el próximo toque
+  get needsRenew() { return !token || exp < Date.now() + 10 * 60000; },
+  get email() { try { return localStorage.getItem('pabe:email') || ''; } catch (e) { return ''; } },
   get configured() { return !!CONFIG.clientId; },
   onAuth(fn) { listeners.add(fn); return () => listeners.delete(fn); },
   hadSession() { try { return localStorage.getItem('pabe:hadSession') === '1'; } catch (e) { return false; } },
@@ -25,7 +28,8 @@ export const drive = {
       callback: r => {
         if (r && r.access_token) {
           token = r.access_token; exp = Date.now() + (r.expires_in || 3600) * 1000; granted = r.scope || CONFIG.scope;
-          try { sessionStorage.setItem('pabe:tok', JSON.stringify({ token, exp, scope: granted })); localStorage.setItem('pabe:hadSession', '1'); } catch (e) {}
+          try { localStorage.setItem('pabe:tok', JSON.stringify({ token, exp, scope: granted })); localStorage.setItem('pabe:hadSession', '1'); } catch (e) {}
+          if (!drive.email) drive.req(`${API}/about?fields=user(emailAddress)`).then(x => x.json()).then(j => { try { localStorage.setItem('pabe:email', j.user?.emailAddress || ''); } catch (e) {} }).catch(() => {});
           listeners.forEach(f => f(true));
         }
         waiters.splice(0).forEach(w => w(!!(r && r.access_token)));
@@ -38,13 +42,13 @@ export const drive = {
   // Pide (o renueva) el permiso. silent = sin pantalla si ya se dio permiso antes.
   signIn(silent) {
     if (!client) return Promise.resolve(false);
-    return new Promise(res => { waiters.push(res); client.requestAccessToken({ prompt: silent ? '' : 'consent' }); });
+    return new Promise(res => { waiters.push(res); client.requestAccessToken({ prompt: silent ? '' : 'consent', hint: this.email || undefined }); });
   },
 
-  signOut() { if (token && window.google) google.accounts.oauth2.revoke(token, () => {}); token = null; exp = 0; try { sessionStorage.removeItem('pabe:tok'); localStorage.removeItem('pabe:hadSession'); } catch (e) {} listeners.forEach(f => f(false)); },
+  signOut() { if (token && window.google) google.accounts.oauth2.revoke(token, () => {}); token = null; exp = 0; try { sessionStorage.removeItem('pabe:tok'); localStorage.removeItem('pabe:tok'); localStorage.removeItem('pabe:hadSession'); } catch (e) {} listeners.forEach(f => f(false)); },
 
   async req(url, opt = {}, retry = true) {
-    if (!this.ready) { const ok = await this.signIn(true); if (!ok) throw Object.assign(new Error('auth'), { code: 'auth' }); }
+    if (!this.ready) throw Object.assign(new Error('auth'), { code: 'auth' });
     const r = await fetch(url, { cache: 'no-store', ...opt, headers: { ...(opt.headers || {}), Authorization: 'Bearer ' + token } });
     if (r.status === 401 && retry) { token = null; return this.req(url, opt, false); }
     if (r.status === 429 || r.status >= 500) { if (retry) { await new Promise(s => setTimeout(s, 800 + Math.random() * 1200)); return this.req(url, opt, false); } }

@@ -71,6 +71,15 @@ async function boot() {
   };
   if (drive.configured) { await drive.load().catch(() => {}); if (drive.ready) { syncNow(); pullSettings(); } paintSync(); }
 
+  // Renovar el permiso de Google solo, sin botón: en el primer toque cuando quedan menos de 10 min o ya caducó.
+  // (Google exige que la ventanita de renovación salga de un toque; con la cuenta ya elegida, se cierra sola.)
+  let renewing = false, lastTry = 0;
+  const autoRenew = () => {
+    if (!drive.configured || !drive.hadSession() || !drive.needsRenew || renewing || Date.now() - lastTry < 60000) return;
+    renewing = true; lastTry = Date.now();
+    drive.signIn(true).then(ok => { renewing = false; if (ok) syncNow(); });
+  };
+  addEventListener('pointerdown', autoRenew, true); addEventListener('keydown', autoRenew, true);
   if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').then(r => r.update()).catch(() => {});
   navigator.serviceWorker?.addEventListener('controllerchange', () => { if (!sessionStorage.getItem('pabe:reloaded')) { sessionStorage.setItem('pabe:reloaded', '1'); location.reload(); } });
 }

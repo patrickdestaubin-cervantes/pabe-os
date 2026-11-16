@@ -8,7 +8,10 @@ const L = { get(k, d) { try { const v = localStorage.getItem('pabe:ag:' + k); re
 const MODELS = [['claude-sonnet-5-5', 'Sonnet (recomendado)'], ['claude-haiku-5-5', 'Haiku (más rápido y barato)'], ['claude-opus-5-5', 'Opus (más potente)']];
 const modules = {};          // id → { nombre, context(), tools:[{name, description, input_schema, run}] }
 let currentModule = () => 'notas';
-let msgs = L.get('msgs', []); // historial para la API
+// Historial para la API. Los bloques internos de razonamiento («thinking») no se guardan: solo valen para la petición
+// en la que nacieron, y reenviarlos con otro contexto hace fallar a la API (error 400).
+const clean = arr => arr.map(m => Array.isArray(m.content) ? { ...m, content: m.content.filter(c => c.type !== 'thinking' && c.type !== 'redacted_thinking') } : m).filter(m => typeof m.content === 'string' || m.content.length);
+let msgs = clean(L.get('msgs', []));
 let busy = false, rec = null, listening = false, spokeIt = false;
 
 export const agente = {
@@ -38,15 +41,19 @@ Reglas:
 async function callClaude() {
   const key = L.get('key', '');
   const tools = allTools();
+  const system = systemPrompt(); // el mismo contexto durante toda la respuesta (también entre herramientas)
+  const start = msgs.length;
   for (let step = 0; step < 8; step++) {
     const r = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
-      body: JSON.stringify({ model: L.get('model', MODELS[0][0]), max_tokens: 1200, system: systemPrompt(), tools: tools.map(t => ({ name: t.name, description: t.description, input_schema: t.input_schema })), messages: msgs })
+      body: JSON.stringify({ model: L.get('model', MODELS[0][0]), max_tokens: 1200, system, tools: tools.map(t => ({ name: t.name, description: t.description, input_schema: t.input_schema })), messages: msgs })
     });
     if (!r.ok) { const t = await r.text().catch(() => ''); throw Object.assign(new Error('api'), { status: r.status, body: t }); }
     const j = await r.json();
     msgs.push({ role: 'assistant', content: j.content });
+    // los turnos anteriores a esta pregunta no llevan razonamiento interno
+    for (let k = 0; k < start; k++) { const m = msgs[k]; if (Array.isArray(m.content)) m.content = m.content.filter(c => c.type !== 'thinking' && c.type !== 'redacted_thinking'); }
     const uses = j.content.filter(c => c.type === 'tool_use');
     if (j.stop_reason !== 'tool_use' || !uses.length) return j.content.filter(c => c.type === 'text').map(c => c.text).join('\n').trim();
     const results = [];
@@ -92,7 +99,7 @@ async function send(text, byVoice) {
     const s = e.status;
     bubble('err', s === 401 ? 'La clave de la API no es válida. Revísala en ajustes (⚙).' : s === 429 ? 'Demasiadas peticiones o sin saldo en la cuenta de la API. Prueba en un momento.' : s === 400 && /credit/i.test(e.body || '') ? 'La cuenta de la API no tiene saldo. Añade crédito en console.anthropic.com.' : navigator.onLine === false ? 'Sin conexión.' : 'No pude contestar (' + (s || 'error') + ')' + (() => { try { const m = JSON.parse(e.body || '{}').error?.message; return m ? ': ' + m : '.'; } catch (_) { return '.'; } })());
   }
-  msgs = msgs.slice(-40); while (msgs.length && (msgs[0].role !== 'user' || typeof msgs[0].content !== 'string')) msgs.shift();
+  msgs = clean(msgs).slice(-40); while (msgs.length && (msgs[0].role !== 'user' || typeof msgs[0].content !== 'string')) msgs.shift();
   L.set('msgs', msgs); busy = false; $('#agPanel').classList.remove('busy');
 }
 function speak(t) {
