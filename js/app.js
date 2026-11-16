@@ -1,5 +1,6 @@
 // PABE OS — carcasa: carril de módulos, botón +, estado de Drive
 import { drive } from './drive.js';
+import { CONFIG } from './config.js';
 import { on, sync, syncNow } from './store.js';
 import * as notas from './modules/notas.js';
 import { agente, mountAgent } from './agente.js';
@@ -32,7 +33,16 @@ function paintSync() {
   b.title = !drive.configured ? 'Falta configurar el acceso a Google: de momento se guarda solo aquí' : s === 'ok' ? 'Todo guardado en tu Drive personal (06 PABE OS). Toca para sincronizar ahora.' : '';
 }
 
+// Borrón y cuenta nueva: si cambia CONFIG.epoch, se vacía la copia local de este dispositivo (Drive manda)
+async function resetIfNeeded() {
+  let cur = null; try { cur = localStorage.getItem('pabe:epoch'); } catch (e) {}
+  if (cur === CONFIG.epoch) return;
+  await new Promise(ok => { try { const r = indexedDB.deleteDatabase('pabe-os'); r.onsuccess = r.onerror = r.onblocked = () => ok(); } catch (e) { ok(); } });
+  try { Object.keys(localStorage).filter(k => k.startsWith('pabe:') && !k.startsWith('pabe:ag:') && !k.startsWith('pabe:kind') && !k.startsWith('pabe:pen') && !k.startsWith('pabe:shapes') && k !== 'pabe:sawPen').forEach(k => localStorage.removeItem(k)); localStorage.setItem('pabe:epoch', CONFIG.epoch); } catch (e) {}
+}
+
 async function boot() {
+  await resetIfNeeded();
   $('#rail').addEventListener('click', e => { const b = e.target.closest('.mod'); if (b) go(b.dataset.m); });
   $('#plus').onclick = () => { if (current !== 'notas') go('notas'); else notas.enter(); };
   addEventListener('hashchange', () => go(location.hash.slice(1)));

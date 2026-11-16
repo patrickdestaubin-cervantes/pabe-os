@@ -45,7 +45,7 @@ export const drive = {
 
   async req(url, opt = {}, retry = true) {
     if (!this.ready) { const ok = await this.signIn(true); if (!ok) throw Object.assign(new Error('auth'), { code: 'auth' }); }
-    const r = await fetch(url, { ...opt, headers: { ...(opt.headers || {}), Authorization: 'Bearer ' + token } });
+    const r = await fetch(url, { cache: 'no-store', ...opt, headers: { ...(opt.headers || {}), Authorization: 'Bearer ' + token } });
     if (r.status === 401 && retry) { token = null; return this.req(url, opt, false); }
     if (r.status === 429 || r.status >= 500) { if (retry) { await new Promise(s => setTimeout(s, 800 + Math.random() * 1200)); return this.req(url, opt, false); } }
     if (!r.ok) throw Object.assign(new Error('drive ' + r.status), { code: r.status, body: await r.text().catch(() => '') });
@@ -82,7 +82,7 @@ export const drive = {
     const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
     return this.upload(blob, id ? { name } : { name, parents: [parent], mimeType: 'application/json' }, id);
   },
-  async readJSON(id) { return (await this.req(`${API}/files/${id}?alt=media&supportsAllDrives=true`)).json(); },
+  async readJSON(id) { return (await this.req(`${API}/files/${id}?alt=media&supportsAllDrives=true&t=${Date.now()}`)).json(); },
   async readBlob(id) { return (await this.req(`${API}/files/${id}?alt=media&supportsAllDrives=true`)).blob(); },
   async trash(id) { await this.req(`${API}/files/${id}?supportsAllDrives=true`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ trashed: true }) }); },
   viewUrl(id) { return `https://drive.google.com/file/d/${id}/view`; }
