@@ -3,10 +3,10 @@ import { CONFIG } from './config.js';
 
 const API = 'https://www.googleapis.com/drive/v3';
 const UP = 'https://www.googleapis.com/upload/drive/v3';
-let token = null, exp = 0, client = null, waiters = [];
+let token = null, exp = 0, client = null, waiters = [], granted = '';
 const listeners = new Set();
 
-try { const t = JSON.parse(sessionStorage.getItem('pabe:tok') || 'null'); if (t && t.exp > Date.now() + 60000) { token = t.token; exp = t.exp; } } catch (e) {}
+try { const t = JSON.parse(sessionStorage.getItem('pabe:tok') || 'null'); if (t && t.exp > Date.now() + 60000 && (t.scope || '').includes('drive.appdata')) { token = t.token; exp = t.exp; granted = t.scope; } } catch (e) {}
 
 export const drive = {
   get ready() { return !!token && exp > Date.now() + 30000; },
@@ -24,8 +24,8 @@ export const drive = {
       client_id: CONFIG.clientId, scope: CONFIG.scope,
       callback: r => {
         if (r && r.access_token) {
-          token = r.access_token; exp = Date.now() + (r.expires_in || 3600) * 1000;
-          try { sessionStorage.setItem('pabe:tok', JSON.stringify({ token, exp })); localStorage.setItem('pabe:hadSession', '1'); } catch (e) {}
+          token = r.access_token; exp = Date.now() + (r.expires_in || 3600) * 1000; granted = r.scope || CONFIG.scope;
+          try { sessionStorage.setItem('pabe:tok', JSON.stringify({ token, exp, scope: granted })); localStorage.setItem('pabe:hadSession', '1'); } catch (e) {}
           listeners.forEach(f => f(true));
         }
         waiters.splice(0).forEach(w => w(!!(r && r.access_token)));
@@ -85,5 +85,16 @@ export const drive = {
   async readJSON(id) { return (await this.req(`${API}/files/${id}?alt=media&supportsAllDrives=true&t=${Date.now()}`)).json(); },
   async readBlob(id) { return (await this.req(`${API}/files/${id}?alt=media&supportsAllDrives=true`)).blob(); },
   async trash(id) { await this.req(`${API}/files/${id}?supportsAllDrives=true`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ trashed: true }) }); },
-  viewUrl(id) { return `https://drive.google.com/file/d/${id}/view`; }
+  viewUrl(id) { return `https://drive.google.com/file/d/${id}/view`; },
+  // Zona privada de la app en el Drive (appDataFolder): solo PABE puede leerla; no aparece en «Mi unidad»
+  async appGet(name) {
+    const j = await (await this.req(`${API}/files?spaces=appDataFolder&q=${encodeURIComponent(`name='${name}'`)}&fields=files(id)`)).json();
+    const id = j.files?.[0]?.id; if (!id) return null;
+    return (await this.req(`${API}/files/${id}?alt=media&t=${Date.now()}`)).json();
+  },
+  async appSet(name, data) {
+    const j = await (await this.req(`${API}/files?spaces=appDataFolder&q=${encodeURIComponent(`name='${name}'`)}&fields=files(id)`)).json();
+    const id = j.files?.[0]?.id, blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
+    return this.upload(blob, id ? { name } : { name, parents: ['appDataFolder'] }, id);
+  }
 };

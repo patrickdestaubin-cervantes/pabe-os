@@ -5,7 +5,7 @@ export const CONFIG = {
   // Carpeta raíz «06 PABE OS» del Drive personal
   rootFolder: '1gMrgZDv9D6FcV3AbP1cXAN9GaQkmXDvz',
   // Acceso completo a Drive: necesario para trabajar dentro de «06 PABE OS», que ya existe
-  scope: 'https://www.googleapis.com/auth/drive',
+  scope: 'https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/drive.appdata',
   version: '1.1.0',
   // Cambiar esta fecha = «borrón y cuenta nueva» de los datos guardados en cada dispositivo
   epoch: '2026-11-16-reset2'

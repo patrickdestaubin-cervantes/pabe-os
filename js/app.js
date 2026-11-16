@@ -3,7 +3,7 @@ import { drive } from './drive.js';
 import { CONFIG } from './config.js';
 import { on, sync, syncNow } from './store.js';
 import * as notas from './modules/notas.js';
-import { agente, mountAgent } from './agente.js';
+import { agente, mountAgent, pullSettings } from './agente.js';
 
 const $ = s => document.querySelector(s);
 const MODS = {
@@ -51,14 +51,14 @@ async function boot() {
   agente.register('notas', notas.agentDef); agente.setCurrent(() => current || 'notas'); mountAgent();
   go(location.hash.slice(1) || 'notas');
 
-  on('sync', paintSync); drive.onAuth(ok => { paintSync(); if (ok) syncNow(); });
+  on('sync', paintSync); drive.onAuth(ok => { paintSync(); if (ok) { syncNow(); pullSettings(); } });
   paintSync();
   $('#drv').onclick = async () => {
     if (!drive.configured) { const t = document.getElementById('toast'); t.textContent = 'Aún no está conectado a tu Drive: cada dispositivo guarda solo lo suyo'; t.classList.add('on'); setTimeout(() => t.classList.remove('on'), 4000); return; }
     if (!drive.ready) { const ok = await drive.signIn(!drive.hadSession() ? false : true); if (!ok) { const ok2 = await drive.signIn(false); if (!ok2) return; } }
     syncNow();
   };
-  if (drive.configured) { await drive.load().catch(() => {}); if (drive.ready) syncNow(); paintSync(); }
+  if (drive.configured) { await drive.load().catch(() => {}); if (drive.ready) { syncNow(); pullSettings(); } paintSync(); }
 
   if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').then(r => r.update()).catch(() => {});
   navigator.serviceWorker?.addEventListener('controllerchange', () => { if (!sessionStorage.getItem('pabe:reloaded')) { sessionStorage.setItem('pabe:reloaded', '1'); location.reload(); } });
