@@ -278,8 +278,16 @@ function cancelAct() { if (act && act.k === 'draw') { cur.doc.tabs[cur.tab] = it
 function tapAt(e) { const w = toW(e); if (e.pointerType === 'touch') { addText(w); return; } if (isDouble(e, 'bg')) addText(w); else showCaret(w); }
 
 function onDown(e) {
+  // Tablas dentro de la nota: el ratón y el lápiz trabajan en la tabla; con el dedo, arrastrar mueve el lienzo y dos dedos hacen zoom
+  if (e.target.closest('.tbl') && !e.target.closest('.tbl-h span') && !e.target.classList.contains('rz')) {
+    if (e.pointerType !== 'touch' || e.target.closest('input,textarea,select,[contenteditable="true"],[contenteditable="plaintext-only"]')) return;
+    if (penDown || performance.now() - penUpAt < 500) return;
+    ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY, t: 'touch' });
+    if (ptrs.size === 2) { cancelAct(); hideCaret(); const [a, b] = [...ptrs.values()]; act = { k: 'pinch', d: dist(a, b) || 1, m: mid(a, b), cam: { ...cam }, touch: true }; return; }
+    if (ptrs.size === 1) act = { k: 'pan', sx: e.clientX, sy: e.clientY, cam: { ...cam }, tap: true, tbl: true, touch: true };
+    return;
+  }
   if (e.target.closest('button,a') || e.target.closest('.tx.editing')) return;
-  if (e.target.closest('.tbl') && !e.target.closest('.tbl-h span') && !e.target.classList.contains('rz')) return;
   if (editing()) document.activeElement.blur();
   const isPen = e.pointerType === 'pen', isTouch = e.pointerType === 'touch';
   if (isPen) {
@@ -310,7 +318,7 @@ function onMove(e) {
   if (e.pointerType === 'mouse' && !ptrs.size) lastW = caretW || toW(e);
   const q = ptrs.get(e.pointerId); if (!q) return; q.x = e.clientX; q.y = e.clientY; if (!act) return;
   if (act.k === 'pinch') { if (ptrs.size < 2) return; const [a, b] = [...ptrs.values()], r = stage.getBoundingClientRect(), m = mid(a, b), k = Math.min(6, Math.max(.1, act.cam.k * dist(a, b) / act.d)); const wx = (act.m.x - r.left - act.cam.x) / act.cam.k, wy = (act.m.y - r.top - act.cam.y) / act.cam.k; cam.k = k; cam.x = m.x - r.left - wx * k; cam.y = m.y - r.top - wy * k; applyCam(); return; }
-  if (act.k === 'pan') { const dx = e.clientX - act.sx, dy = e.clientY - act.sy; if (Math.hypot(dx, dy) > 6) act.tap = false; cam.x = act.cam.x + dx; cam.y = act.cam.y + dy; applyCam(); return; }
+  if (act.k === 'pan') { const dx = e.clientX - act.sx, dy = e.clientY - act.sy; if (act.tbl && act.tap && Math.hypot(dx, dy) < 10) return; if (Math.hypot(dx, dy) > 6) act.tap = false; cam.x = act.cam.x + dx; cam.y = act.cam.y + dy; applyCam(); return; }
   if (act.k === 'draw') {
     let evs = e.getCoalescedEvents ? e.getCoalescedEvents() : []; if (!evs.length) evs = [e];
     const p = act.s.p;
@@ -340,6 +348,7 @@ function onUp(e) {
   const a = act; if (a.k === 'pinch') { if (!ptrs.size) act = null; return; }
   act = null; const ok = e.type === 'pointerup';
   if (a.k === 'draw') { if (!a.isPen && a.moved < 4) { cur.doc.tabs[cur.tab] = items().filter(i => i !== a.s); a.el.remove(); hist.pop(); if (ok) tapAt(e); return; } act0v = a.v; if (a.s.k === 'brush' && a.raw) { const p = a.s.p; p.push(a.raw.x, a.raw.y, p[p.length - 1]); } finishStroke(a.s, a.el); dirty(); return; }
+  if (a.k === 'pan' && a.tbl) return; // un toque en la tabla lo atiende la propia tabla
   if (a.k === 'pan' && a.tap && ok) { tapAt(e); return; }
   if (a.k === 'move') { if (a.moved) dirty(); else if (ok && a.it.t === 'x') editAt(a.el, e); return; }
   if (a.k === 'resize' && a.snapped) dirty();
@@ -459,7 +468,7 @@ export async function mount(el, opts = {}) {
   stage.addEventListener('scroll', () => { if (stage.scrollTop || stage.scrollLeft) { stage.scrollTop = 0; stage.scrollLeft = 0; } });
   stage.addEventListener('pointerdown', onDown); stage.addEventListener('pointermove', onMove);
   stage.addEventListener('pointerup', onUp); stage.addEventListener('pointercancel', onUp);
-  ['touchstart', 'touchmove'].forEach(t => stage.addEventListener(t, e => { if (!e.target.closest('.tx.editing') && !e.target.closest('button,a') && !(e.target.closest('.tbl') && !e.target.closest('.tbl-h span'))) e.preventDefault(); }, { passive: false }));
+  ['touchstart', 'touchmove'].forEach(t => stage.addEventListener(t, e => { if (!e.target.closest('.tx.editing') && !e.target.closest('button,a') && !(e.target.closest('.tbl') && !e.target.closest('.tbl-h span') && e.touches.length < 2 && t === 'touchstart')) e.preventDefault(); }, { passive: false }));
   stage.addEventListener('contextmenu', e => e.preventDefault());
   stage.addEventListener('wheel', e => { e.preventDefault(); if (e.ctrlKey || e.metaKey) zoomAt(e.clientX, e.clientY, Math.exp(-e.deltaY * .01)); else { cam.x -= e.deltaX; cam.y -= e.deltaY; applyCam(); } }, { passive: false });
   stage.addEventListener('dragover', e => e.preventDefault());

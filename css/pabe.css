@@ -297,3 +297,5 @@ path.mk{mix-blend-mode:multiply}@media (prefers-color-scheme:dark){path.mk{mix-b
 
 .fin-tabs,.cf-bar{white-space:nowrap;overflow-x:auto;scrollbar-width:none}.fin-tab{flex:none}
 @media (max-width:700px){.cf-chart{padding:8px 6px 2px}.cf tbody th{min-width:130px}}
+
+.tb-mv{display:flex;gap:4px}.tb-mv .tb-pi{flex:1;font-size:13px}.tb-mv .tb-pi:disabled{opacity:.35}

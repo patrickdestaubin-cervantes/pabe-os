@@ -274,6 +274,7 @@ export function createTable(el, cfg) {
     const p = allProps().find(x => x.id === th.dataset.prop);
     openPop(th, `<input class="tb-rn" value="${esc(p.nombre)}" aria-label="Nombre de la columna">
      <button class="tb-pi" data-s="1">↑ Ordenar ascendente</button><button class="tb-pi" data-s="-1">↓ Ordenar descendente</button>
+     <div class="tb-mv"><button class="tb-pi" data-mv="-1" ${visible()[0]?.id === p.id ? 'disabled' : ''}>← Mover a la izquierda</button><button class="tb-pi" data-mv="1" ${visible().at(-1)?.id === p.id ? 'disabled' : ''}>Mover a la derecha →</button></div>
      <button class="tb-pi" data-f>Filtrar</button><button class="tb-pi" data-h>Ocultar</button>
      ${p.custom ? `<div class="tb-sub">Tipo</div><div class="tb-types">${NEWTYPES.map(t => `<button class="tb-ty${t === p.tipo ? ' on' : ''}" data-ty="${t}">${TYPES[t].i} ${TYPES[t].l}</button>`).join('')}</div><button class="tb-pi tb-danger" data-del>Eliminar propiedad</button>` : `<p class="tb-mut tb-pad">Propiedad básica: se puede ocultar, no borrar.</p>`}`);
     const rn = pop.querySelector('.tb-rn');
@@ -282,6 +283,12 @@ export function createTable(el, cfg) {
     pop.onclick = e => {
       const b = e.target.closest('button'); if (!b) return;
       if (b.dataset.s) { P.sort = { id: p.id, dir: +b.dataset.s }; saveP(); closePop(); render(); }
+      if (b.dataset.mv) { // cambiar el orden de la columna (funciona también en tablet y móvil); el menú sigue abierto para moverla varias veces
+        const vis = visible().map(x => x.id), i = vis.indexOf(p.id), nb = vis[i + +b.dataset.mv]; if (!nb) return;
+        const ids = allProps().map(x => x.id); ids.splice(ids.indexOf(p.id), 1); ids.splice(ids.indexOf(nb) + (+b.dataset.mv > 0 ? 1 : 0), 0, p.id);
+        P.order = ids; saveP(); closePop(); render();
+        const nth = el.querySelector(`th[data-prop="${p.id}"]`); if (nth) { nth.scrollIntoView?.({ block: 'nearest', inline: 'nearest' }); headMenu(nth); }
+      }
       if ('f' in b.dataset) { closePop(); addFilter(th, p.id); }
       if ('h' in b.dataset) { P.hidden.push(p.id); saveP(); closePop(); render(); }
       if (b.dataset.ty) {
