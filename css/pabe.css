@@ -273,3 +273,27 @@ tr:hover .tb-sel input,.tb-sel input:checked,th .tb-sel input,.tb-selrow .tb-sel
 .tb-form th .tb-ti{margin-right:8px}
 
 path.mk{mix-blend-mode:multiply}@media (prefers-color-scheme:dark){path.mk{mix-blend-mode:screen}}
+
+/* Finanzas · Cashflow */
+.cf-bar{display:flex;align-items:center;gap:4px;margin:6px 0 10px}.cf-bar .mut{font-size:13px;margin-right:6px}
+.cf-chart{border:1px solid var(--line);border-radius:12px;padding:10px 12px 4px;margin-bottom:14px}
+.cf-chart svg{width:100%;display:block}.cf-chart text{font-size:10px;fill:var(--mut)}
+.cf-chart .g{stroke:var(--line);stroke-width:1}.cf-chart .z0{stroke:var(--mut);stroke-width:1;opacity:.5}
+.cf-chart .bi{fill:var(--pos);opacity:.75}.cf-chart .bg{fill:var(--neg);opacity:.7}.cf-chart path.lc{fill:none;stroke:var(--ink);stroke-width:2}.cf-chart circle{fill:var(--ink)}
+.cf-leg{display:flex;gap:16px;font-size:12px;color:var(--mut);margin-bottom:4px}.cf-leg span::before{content:'';display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px}
+.cf-leg .li::before{background:var(--pos)}.cf-leg .lg::before{background:var(--neg)}.cf-leg .lc::before{height:2px;vertical-align:3px;background:var(--ink)}
+.cf-wrap{overflow-x:auto;border:1px solid var(--line);border-radius:12px}
+.cf{border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums;min-width:100%}
+.cf th,.cf td{padding:8px 10px;border-bottom:1px solid var(--line);white-space:nowrap;text-align:right}
+.cf thead th{font-weight:500;color:var(--mut);font-size:12px;text-transform:capitalize}
+.cf tbody th{text-align:left;font-weight:500;position:sticky;left:0;background:var(--bg);min-width:170px}
+.cf thead th:first-child{position:sticky;left:0;background:var(--bg)}
+.cf .v{color:var(--mut)}.cf .t{font-weight:600;border-left:1px solid var(--line)}.cf .z{color:var(--line)}
+.cf tr.sub th{font-weight:400;padding-left:30px;color:var(--mut)}.cf tr.sub td{color:var(--mut)}
+.cf tr.nt td,.cf tr.nt th{font-weight:600}.cf tr.cj td,.cf tr.cj th{background:var(--soft)}.cf tr.cj th{background:var(--soft)}
+.cf tr.in td:not(.v):not(.t){color:var(--pos)}.cf tr.ga td:not(.v):not(.t){color:var(--neg)}.cf td.neg{color:var(--neg)}
+.cf-x{width:18px;color:var(--mut);font-size:11px;margin-right:2px}
+.cf-note{font-size:12px;color:var(--mut);margin:10px 2px 40px}
+
+.fin-tabs,.cf-bar{white-space:nowrap;overflow-x:auto;scrollbar-width:none}.fin-tab{flex:none}
+@media (max-width:700px){.cf-chart{padding:8px 6px 2px}.cf tbody th{min-width:130px}}

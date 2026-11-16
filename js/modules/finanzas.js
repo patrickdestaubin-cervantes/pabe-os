@@ -140,7 +140,69 @@ function buildCta(el) {
   });
 }
 
+/* ---------- cashflow proyectado (mes a mes) ---------- */
+let cfMeses = 12; const cfOpen = new Set();
+const addYm = (ym, k) => { const [y, m] = ym.split('-').map(Number), d = new Date(y, m - 1 + k, 1); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'); };
+const mesCorto = ym => new Intl.DateTimeFormat('es-ES', { month: 'short', year: '2-digit' }).format(new Date(ym + '-15')).replace('.', '');
+const catName = m => tagName('cat', first(m, 'cat')) || 'Sin categoría';
+function cashflow() {
+  const y0 = ymNow(), meses = Array.from({ length: cfMeses }, (_, i) => addYm(y0, i));
+  let act = 0, pas = 0, caja = 0;
+  for (const c of ctas()) { const v = Math.abs(+c.saldo || 0); if (first(c, 'ap') === 'pasivo') pas += v; else { act += v; if (c.caja) caja += v; } }
+  // Vencido: previstos puntuales de meses anteriores que no se han marcado como reales
+  const venc = { ing: {}, gas: {} };
+  const ing = {}, gas = {};
+  for (const m of movs()) {
+    const est = first(m, 'estado'); if (est === 'nocontar') continue;
+    const cat = catName(m), rep = first(m, 'rep') || 'puntual';
+    if (est === 'previsto' && rep === 'puntual' && m.fecha && m.fecha.slice(0, 7) < y0) { const v = (+m.importe || 0) * (first(m, 'tipo') === 'ingreso' ? 1 : -1); const t = v > 0 ? venc.ing : venc.gas; t[cat] = (t[cat] || 0) + Math.abs(v); }
+    meses.forEach((ym, i) => { const v = inMonth(m, ym); if (!v) return; const t = v > 0 ? ing : gas; (t[cat] ||= Array(cfMeses).fill(0))[i] += Math.abs(v); });
+  }
+  const sum = o => Object.values(o).reduce((a, b) => a + b, 0);
+  const tot = o => meses.map((_, i) => Object.values(o).reduce((a, arr) => a + arr[i], 0));
+  const ingM = tot(ing), gasM = tot(gas), vI = sum(venc.ing), vG = sum(venc.gas);
+  const netM = meses.map((_, i) => ingM[i] - gasM[i]);
+  const ini = [], fin = []; let c = caja + vI - vG;
+  meses.forEach((_, i) => { ini.push(c); c += netM[i]; fin.push(c); });
+  const patr = fin.map(f => act - pas + (f - caja));
+  return { meses, ing, gas, venc, ingM, gasM, vI, vG, netM, ini, fin, caja, act, pas, patr };
+}
+function renderCashflow(el) {
+  const d = cashflow(), f = v => v ? eur.format(Math.round(v)).replace(/\s?€/, ' €') : '<span class="z">—</span>';
+  const cls = v => v < 0 ? 'neg' : '';
+  const row = (lbl, vals, { venc = '', total = true, k = '', key = '', sub = false, sign = false } = {}) => {
+    const t = vals.reduce((a, b) => a + b, 0) + (+venc || 0);
+    const open = key && cfOpen.has(key);
+    return `<tr class="${k}${sub ? ' sub' : ''}">${`<th>${key ? `<button class="cf-x" data-cf="${key}">${open ? '▾' : '▸'}</button>` : ''}${esc(lbl)}</th>`}<td class="v">${venc === '' ? '' : f(venc)}</td>${vals.map(v => `<td class="${sign ? cls(v) : ''}">${f(v)}</td>`).join('')}<td class="t ${sign ? cls(t) : ''}">${total ? f(t) : ''}</td></tr>`;
+  };
+  const cats = (o, venc) => Object.keys(o).sort((a, b) => o[b].reduce((x, y) => x + y) - o[a].reduce((x, y) => x + y)).map(c => row(c, o[c], { venc: venc[c] || 0, sub: true })).join('');
+  const vencCats = (o, rows) => Object.keys(o).filter(c => !rows[c]).map(c => row(c, Array(cfMeses).fill(0), { venc: o[c], sub: true })).join('');
+  el.innerHTML = `<div class="cf-bar"><span class="mut">Horizonte</span>${[6, 12, 24].map(n => `<button class="fin-tab ${n === cfMeses ? 'on' : ''}" data-cfm="${n}">${n} meses</button>`).join('')}</div>
+  ${chart(d, el.clientWidth || 760)}
+  <div class="cf-wrap"><table class="cf"><thead><tr><th></th><th class="v">Vencido</th>${d.meses.map(m => `<th>${mesCorto(m)}</th>`).join('')}<th class="t">Total</th></tr></thead><tbody>
+  ${row('Caja al inicio', d.ini, { total: false, k: 'cj' })}
+  ${row('Ingresos', d.ingM, { venc: d.vI, key: 'ing', k: 'in' })}${cfOpen.has('ing') ? cats(d.ing, d.venc.ing) + vencCats(d.venc.ing, d.ing) : ''}
+  ${row('Gastos', d.gasM, { venc: d.vG, key: 'gas', k: 'ga' })}${cfOpen.has('gas') ? cats(d.gas, d.venc.gas) + vencCats(d.venc.gas, d.gas) : ''}
+  ${row('Flujo neto', d.netM, { venc: d.vI - d.vG, k: 'nt', sign: true })}
+  ${row('Caja a fin de mes', d.fin, { total: false, k: 'cj', sign: true })}
+  ${row('Patrimonio neto', d.patr, { total: false, key: 'pat', k: 'pt', sign: true })}${cfOpen.has('pat') ? row('Activos', d.fin.map(x => d.act + (x - d.caja)), { total: false, sub: true }) + row('Pasivos', d.meses.map(() => -d.pas), { total: false, sub: true, sign: true }) : ''}
+  </tbody></table></div>
+  <p class="cf-note">Calculado con tus movimientos (previstos y reales, con sus repeticiones) y el saldo de las cuentas marcadas «En caja». «Vencido» son previstos de meses pasados sin marcar como reales: se cuentan en la caja del primer mes.</p>`;
+}
+// gráfico: barras de ingresos y gastos por mes + línea de caja a fin de mes
+function chart(d, cw) {
+  const W = Math.max(300, Math.min(1400, cw - 26)), H = W < 600 ? 180 : 220, P = { l: 56, r: 12, t: 12, b: 26 }, n = d.meses.length, bw = (W - P.l - P.r) / n;
+  const vals = [...d.ingM, ...d.gasM, ...d.fin, 0], max = Math.max(...vals), min = Math.min(...vals);
+  const y = v => P.t + (H - P.t - P.b) * (1 - (v - min) / ((max - min) || 1)), y0 = y(0);
+  const ticks = [min, (min + max) / 2, max].map(v => `<line x1="${P.l}" x2="${W - P.r}" y1="${y(v)}" y2="${y(v)}" class="g"/><text x="${P.l - 6}" y="${y(v) + 4}" text-anchor="end">${Math.abs(v) >= 1000 ? Math.round(v / 1000) + 'k' : Math.round(v)}</text>`).join('');
+  const bars = d.meses.map((m, i) => { const x = P.l + i * bw, w = Math.max(2, bw * .32); return `<rect class="bi" x="${x + bw * .16}" y="${y(d.ingM[i])}" width="${w}" height="${Math.max(0, y0 - y(d.ingM[i]))}" rx="2"><title>${mesCorto(m)} · ingresos ${eur.format(d.ingM[i])}</title></rect><rect class="bg" x="${x + bw * .16 + w + 2}" y="${y(d.gasM[i])}" width="${w}" height="${Math.max(0, y0 - y(d.gasM[i]))}" rx="2"><title>${mesCorto(m)} · gastos ${eur.format(d.gasM[i])}</title></rect>${(bw > 34 || i % Math.ceil(34 / bw) === 0) ? `<text x="${x + bw / 2}" y="${H - 8}" text-anchor="middle">${mesCorto(m)}</text>` : ''}`; }).join('');
+  const line = d.fin.map((v, i) => `${i ? 'L' : 'M'}${P.l + i * bw + bw / 2} ${y(v)}`).join('');
+  const dots = d.fin.map((v, i) => `<circle cx="${P.l + i * bw + bw / 2}" cy="${y(v)}" r="3"><title>${mesCorto(d.meses[i])} · caja ${eur.format(v)}</title></circle>`).join('');
+  return `<div class="cf-chart"><div class="cf-leg"><span class="li">Ingresos</span><span class="lg">Gastos</span><span class="lc">Caja a fin de mes</span></div><svg viewBox="0 0 ${W} ${H}" style="height:${H}px">${ticks}<line x1="${P.l}" x2="${W - P.r}" y1="${y0}" y2="${y0}" class="z0"/>${bars}<path d="${line}" class="lc"/>${dots}</svg></div>`;
+}
+
 function summary() {
+  if (section === 'cf') { const d = cashflow(); const last = d.fin[d.fin.length - 1]; return `<div class="fin-k"><span>Caja hoy</span><b>${eur.format(d.caja)}</b></div><div class="fin-k"><span>Caja en ${esc(mesCorto(d.meses[d.meses.length - 1]))}</span><b class="${last < 0 ? 'neg' : ''}">${eur.format(last)}</b></div><div class="fin-k"><span>Mes más bajo</span><b class="${Math.min(...d.fin) < 0 ? 'neg' : ''}">${eur.format(Math.min(...d.fin))}</b></div>`; }
   if (section === 'movs') {
     const ym = ymNow(); let ing = 0, gas = 0, real = 0;
     for (const m of movs()) { const v = inMonth(m, ym); if (v > 0) ing += v; else gas -= v; if (first(m, 'estado') === 'real') real += v; }
@@ -155,15 +217,16 @@ function render() {
   if (!root) return;
   root.querySelectorAll('.fin-tab').forEach(b => b.classList.toggle('on', b.dataset.sec === section));
   $('#finKpis', root).innerHTML = summary();
-  $('#finMov', root).hidden = section !== 'movs'; $('#finCta', root).hidden = section !== 'ctas';
+  $('#finMov', root).hidden = section !== 'movs'; $('#finCta', root).hidden = section !== 'ctas'; $('#finCf', root).hidden = section !== 'cf';
+  if (section === 'cf') return renderCashflow($('#finCf', root));
   (section === 'movs' ? tMov : tCta)?.render();
 }
 
 export async function mount(el) {
   root = el;
   el.innerHTML = `<div class="fin">
-   <header class="fin-head"><div class="fin-title"><h1>Finanzas</h1><nav class="fin-tabs"><button class="fin-tab" data-sec="movs">Movimientos</button><button class="fin-tab" data-sec="ctas">Cuentas y patrimonio</button></nav></div><div class="fin-kpis" id="finKpis"></div></header>
-   <div class="tb-host" id="finMov"></div><div class="tb-host" id="finCta" hidden></div></div>`;
+   <header class="fin-head"><div class="fin-title"><h1>Finanzas</h1><nav class="fin-tabs"><button class="fin-tab" data-sec="movs">Movimientos</button><button class="fin-tab" data-sec="ctas">Cuentas y patrimonio</button><button class="fin-tab" data-sec="cf">Cashflow</button></nav></div><div class="fin-kpis" id="finKpis"></div></header>
+   <div class="tb-host" id="finMov"></div><div class="tb-host" id="finCta" hidden></div><div class="cf-host" id="finCf" hidden></div></div>`;
   await col.init(); await tags.init(); seedTags();
   // importación inicial desde la hoja «Finanzas_Personales_v2» (lo que había en la web de Finanzas)
   if (!col.cfg?.importado && !movs().length) {
@@ -171,6 +234,7 @@ export async function mount(el) {
     col.setCfg({ ...(col.cfg || {}), importado: true });
   }
   tMov = buildMov($('#finMov', el)); tCta = buildCta($('#finCta', el));
+  $('#finCf', el).addEventListener('click', e => { const b = e.target.closest('[data-cf],[data-cfm]'); if (!b) return; if (b.dataset.cfm) cfMeses = +b.dataset.cfm; else cfOpen.has(b.dataset.cf) ? cfOpen.delete(b.dataset.cf) : cfOpen.add(b.dataset.cf); render(); });
   el.querySelector('.fin-tabs').addEventListener('click', e => { const b = e.target.closest('[data-sec]'); if (b) { section = b.dataset.sec; render(); } });
   on('change', d => { if (d.col === 'finanzas') render(); });
   on('cfg', d => { if (d.col === 'finanzas') render(); });
