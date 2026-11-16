@@ -385,6 +385,7 @@ function buildTable() {
   table = createTable($('#ntTable'), {
     key: 'notas', newButton: false, newRow: 'Nueva nota', empty: 'Aún no hay notas. Escribe o dibuja en el lienzo y se guardan solas.',
     defaultHidden: ['updated'],
+    cardProps: ['area', 'content', 'created'], // en el móvil: título, área y contenido primero
     views: [{ id: 'all', nombre: 'Todas' }, { id: 'recent', nombre: 'Últimos 7 días', filter: r => Date.now() - (r.updated || r.created) < 7 * 864e5 }, { id: 'files', nombre: 'Con archivos', filter: r => (r.files || []).length > 0 }],
     props: () => [
       { id: 'created', nombre: 'Fecha', tipo: 'date', basica: true, readonly: true, get: r => r.created },
