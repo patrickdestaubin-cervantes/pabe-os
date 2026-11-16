@@ -45,10 +45,10 @@ export function tagChip(t, x) { return t ? `<span class="tb-tag" style="--c:${t.
  */
 export function createTable(el, cfg) {
   const PK = 'tabla:' + cfg.key;
-  let P = {}; try { P = JSON.parse(localStorage.getItem(PK) || '{}'); } catch (e) {}
+  let P = {}; if (cfg.prefs) P = cfg.prefs; else { try { P = JSON.parse(localStorage.getItem(PK) || '{}'); } catch (e) {} }
   P = { order: [], hidden: [], widths: {}, names: {}, sort: null, filters: [], view: cfg.views?.[0]?.id || 'all', calc: {}, ...P };
   if (!P.order.length && cfg.defaultHidden) P.hidden = [...cfg.defaultHidden];
-  const saveP = () => { try { localStorage.setItem(PK, JSON.stringify(P)); } catch (e) {} };
+  const saveP = () => { if (cfg.savePrefs) { cfg.savePrefs(P); return; } try { localStorage.setItem(PK, JSON.stringify(P)); } catch (e) {} };
   let q = '', searchOpen = false, editing = null, pop = null;
 
   const allProps = () => {
@@ -149,7 +149,7 @@ export function createTable(el, cfg) {
       <button class="tb-tool" data-addfilter>Filtro</button><button class="tb-tool" data-addsort>Ordenar</button>
       ${searchOpen ? `<input class="tb-q" type="search" placeholder="Buscar" value="${esc(q)}">` : `<button class="tb-tool" data-search aria-label="Buscar">⌕</button>`}
       <button class="tb-tool" data-colsmenu aria-label="Columnas">⋯</button>
-      <button class="tb-new" data-new>${esc(cfg.newLabel || 'Nuevo')}</button></div></div>
+      ${cfg.newButton === false ? '' : `<button class="tb-new" data-new>${esc(cfg.newLabel || 'Nuevo')}</button>`}</div></div>
      ${chips || sortChip ? `<div class="tb-chips">${sortChip}${chips}</div>` : ''}
      <div class="tb-wrap"><table class="tb"><colgroup><col style="width:34px">${cols}<col></colgroup>
       <thead><tr><th class="tb-h"></th>${head}<th class="tb-plus"><button data-addprop aria-label="Nueva propiedad">+</button></th></tr></thead>

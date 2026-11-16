@@ -1,6 +1,7 @@
 // Módulo 1 — Notas: lienzo infinito (lápiz tipo Nebo, texto, archivos) + biblioteca con la Tabla PABE
 import { collection, tags, files, on, syncNow } from '../store.js';
 import { createTable, pickColor, tagChip, PALETTE } from '../tabla.js';
+const TXT = 18; // tamaño de letra estándar de todos los cuadros de texto
 
 const col = collection('notas');
 const SYS = 'areas';
@@ -34,11 +35,15 @@ const HTML = `
  <span class="sepr"></span>${PENS.map(p => `<button class="sw" data-pen="${p[0]}" style="--c:${p[0] === 'ink' ? 'var(--ink)' : p[1]}" aria-label="Color"><b></b></button>`).join('')}
  <span class="sepr"></span>
  <button class="tl" id="ntText" title="Escribir con el teclado" aria-label="Escribir con el teclado"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 6V4h14v2M12 4v16M9 20h6"/></svg></button>
+ <button class="tl" id="ntInsTable" title="Insertar tabla" aria-label="Insertar tabla"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M3.5 9.5h17M3.5 14.5h17M9.5 9.5v10"/></svg></button>
  <button class="tl" id="ntEraser" title="Borrador (el botón del lápiz también borra)" aria-label="Borrador"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M8 20h12M4.5 14.5l9-9a2 2 0 0 1 3 0l2 2a2 2 0 0 1 0 3l-8 8H8z"/></svg></button>
  <button class="tl" id="ntShapes" aria-label="Reconocer formas"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8.5" cy="8.5" r="4.5"/><rect x="12" y="12" width="8" height="8" rx="1"/></svg></button>
  <span class="sepr"></span>
  <label class="tl" title="Adjuntar archivo o imagen" aria-label="Adjuntar"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M20 11.5l-8 8a5 5 0 0 1-7-7l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7L9.7 17.2a1.7 1.7 0 0 1-2.4-2.4L15 7"/></svg><input type="file" id="ntFile" multiple hidden></label>
  <button class="tl" id="ntUndo" title="Deshacer (Ctrl+Z)" aria-label="Deshacer"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 7H4V2"/><path d="M4 7a8 8 0 1 1-1 7"/></svg></button>
+ <button class="tl" id="ntCopy" title="Copiar (Ctrl+C)" aria-label="Copiar" hidden><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg></button>
+ <button class="tl" id="ntCut" title="Cortar (Ctrl+X)" aria-label="Cortar" hidden><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="6" cy="18" r="3"/><circle cx="18" cy="18" r="3"/><path d="M8.2 15.8L19 4M15.8 15.8L5 4"/></svg></button>
+ <button class="tl" id="ntPaste" title="Pegar (Ctrl+V)" aria-label="Pegar" hidden><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1M9 11h6M9 15h4"/></svg></button>
  <button class="tl" id="ntTrash" title="Eliminar selección" aria-label="Eliminar" hidden><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg></button>
 </div>
 <div class="nt-lib" id="ntLibPanel" hidden><div class="scrim"></div><aside class="panel"><div class="lh"><h2>Notas</h2><button class="ico" id="ntLibClose" aria-label="Cerrar">×</button></div><div id="ntTable" class="tb-host"></div></aside></div>
@@ -53,7 +58,7 @@ function saveNow() {
   clearTimeout(saveT); if (!cur) return;
   if (!cur.saved && isBlank()) return; cur.saved = true;
   const m = cur.meta, all = m.tabs.flatMap(t => (cur.doc.tabs[t.id] || []).map(i => ({ ...i, tab: t.id })));
-  m.text = all.filter(i => i.t === 'x' && i.s.trim()).map(i => i.s.trim()).join(' · ').slice(0, 3000);
+  m.text = all.filter(i => (i.t === 'x' && i.s.trim()) || i.t === 'tb').map(i => i.t === 'tb' ? [(i.n || 'Tabla'), ...(i.rows || []).map(r => r.title)].join(', ') : i.s.trim()).join(' · ').slice(0, 3000);
   m.files = all.filter(i => i.f).map(i => ({ ...i.f, tab: i.tab, item: i.id }));
   m.ink = all.some(i => i.t === 's');
   col.put(clone(m), clone(cur.doc));
@@ -106,7 +111,8 @@ function mkPath(s) {
 const size = b => b > 1e6 ? (b / 1e6).toFixed(1) + ' MB' : Math.max(1, Math.round(b / 1e3)) + ' KB';
 function itemHtml(i) {
   const pos = `left:${i.x}px;top:${i.y}px`;
-  if (i.t === 'x') return `<div class="it tx" data-id="${i.id}" style="${pos};font-size:${i.z}px" spellcheck="false">${esc(i.s)}</div>`;
+  if (i.t === 'x') return `<div class="it tx" data-id="${i.id}" style="${pos};font-size:${TXT}px" spellcheck="false">${esc(i.s)}</div>`;
+  if (i.t === 'tb') return `<div class="it tbl" data-id="${i.id}" style="${pos};width:${i.w || 680}px"><div class="tbl-h"><span>⋮⋮</span><input class="tbl-name" value="${esc(i.n || '')}" placeholder="Tabla sin título" aria-label="Nombre de la tabla"></div><div class="tbl-body tb-host"></div><span class="rz"></span></div>`;
   if (i.t === 'i') return `<div class="it im" data-id="${i.id}" style="${pos};width:${i.w}px"><img data-fid="${esc(i.f.id)}" alt="${esc(i.f.n)}" draggable="false"><span class="rz"></span></div>`;
   const ext = (i.f.n.split('.').pop() || '').slice(0, 4);
   return `<div class="it fi" data-id="${i.id}" style="${pos}"><span class="fic">${esc(ext)}</span><span class="fn">${esc(i.f.n)}<small>${i.f.sz ? size(i.f.sz) : ''}</small></span><button class="fa" data-fopen="${esc(i.f.id)}">Abrir</button><button class="fa" data-fdrive="${esc(i.f.id)}">Drive</button></div>`;
@@ -116,13 +122,42 @@ function renderItems() {
   ink.innerHTML = ''; a.filter(i => i.t === 's').forEach(s => ink.appendChild(mkPath(s)));
   itemsEl.innerHTML = a.filter(i => i.t !== 's').map(itemHtml).join('');
   itemsEl.querySelectorAll('img[data-fid]').forEach(async img => { const u = await blobUrl(img.dataset.fid); if (u) img.src = u; });
+  itemsEl.querySelectorAll('.tbl').forEach(el => mountNoteTable(el, a.find(i => i.id === el.dataset.id)));
   markSel();
+}
+
+/* ---------- tablas dentro de la nota (la misma Tabla PABE de la biblioteca) ---------- */
+function mountNoteTable(el, it) {
+  if (!it) return;
+  it.props = it.props || []; it.rows = it.rows || []; it.prefs = it.prefs || {};
+  const tchange = () => { dirty(); };
+  createTable(el.querySelector('.tbl-body'), {
+    key: 'nota-' + it.id, newButton: false, newRow: 'Nueva fila', empty: 'Escribe abajo la primera fila.',
+    prefs: it.prefs, savePrefs: p => { it.prefs = p; tchange(); },
+    props: () => [{ id: 'title', nombre: 'Nombre', tipo: 'title', basica: true, get: r => r.title, set: (r, v) => { r.title = v; } }],
+    custom: () => it.props,
+    saveCustom: arr => { it.props = arr; tchange(); },
+    rows: () => it.rows,
+    save: () => tchange(),
+    create: nombre => { const r = { id: gid(), title: nombre, valores: {}, created: Date.now() }; it.rows.push(r); tchange(); return r; },
+    open: () => {},
+    remove: r => { it.rows = it.rows.filter(x => x !== r); tchange(); },
+    duplicate: r => { it.rows.push({ ...clone(r), id: gid() }); tchange(); },
+  });
+  const nm = el.querySelector('.tbl-name');
+  nm.oninput = () => { it.n = nm.value; tchange(); };
+}
+function addTable(w) {
+  hideCaret(); snap();
+  const t = { id: gid(), t: 'tb', x: rd(w.x), y: rd(w.y), w: 680, n: '', props: [], rows: [], prefs: {} };
+  items().push(t); renderItems(); dirty();
+  setTimeout(() => itemsEl.querySelector(`[data-id="${t.id}"] .tb-newin`)?.focus({ preventScroll: true }), 30);
 }
 async function blobUrl(id) { if (urlCache.has(id)) return urlCache.get(id); const u = await files.url(id).catch(() => null); if (u) urlCache.set(id, u); return u; }
 function markSel() {
   itemsEl.querySelectorAll('.sel').forEach(e => e.classList.remove('sel'));
   const el = selId && itemsEl.querySelector(`[data-id="${selId}"]`); if (el) el.classList.add('sel'); else selId = null;
-  $('#ntTrash').hidden = !selId;
+  $('#ntTrash').hidden = !selId; $('#ntCopy').hidden = !selId; $('#ntCut').hidden = !selId; $('#ntPaste').hidden = !clip || !!selId;
 }
 function applyCam() {
   world.style.transform = `translate(${cam.x}px,${cam.y}px) scale(${cam.k})`;
@@ -138,6 +173,22 @@ function centerW() { return { x: (stage.clientWidth / 2 - cam.x) / cam.k - 120, 
 function snap() { hist.push(JSON.stringify(items())); if (hist.length > 60) hist.shift(); redo = []; }
 function undo() { if (!hist.length) return; redo.push(JSON.stringify(items())); cur.doc.tabs[cur.tab] = JSON.parse(hist.pop()); selId = null; renderItems(); dirty(); }
 function redoF() { if (!redo.length) return; hist.push(JSON.stringify(items())); cur.doc.tabs[cur.tab] = JSON.parse(redo.pop()); renderItems(); dirty(); }
+let clip = null;
+function copySel(cut) {
+  const it = items().find(i => i.id === selId); if (!it) return;
+  clip = clone(it);
+  const txt = it.t === 'x' ? it.s : it.t === 'tb' ? [(it.n || 'Tabla'), ...(it.rows || []).map(r => r.title)].join('\n') : (it.f?.n || '');
+  clip._txt = txt; try { navigator.clipboard?.writeText(txt).catch(() => {}); } catch (_) {}
+  if (cut) delSel();
+  flash(cut ? 'Cortado' : 'Copiado'); markSel();
+}
+function pasteClip(w) {
+  if (!clip) return false; snap();
+  const n = { ...clone(clip), id: gid() }; delete n._txt;
+  const p = w || caretW || centerW(); n.x = rd(p.x); n.y = rd(p.y);
+  if (n.rows) n.rows = n.rows.map(r => ({ ...r, id: gid() }));
+  items().push(n); selId = n.id; renderItems(); dirty(); return true;
+}
 function delSel() { if (!selId) return; snap(); cur.doc.tabs[cur.tab] = items().filter(i => i.id !== selId); selId = null; renderItems(); dirty(); }
 
 /* =================== herramientas =================== */
@@ -151,10 +202,31 @@ function syncTools() {
 
 /* =================== texto =================== */
 function addText(w, initial) {
-  hideCaret(); snap(); const t = { id: gid(), t: 'x', x: rd(w.x), y: rd(w.y - 14 / cam.k), s: '', z: rd(18 / cam.k) }; items().push(t); renderItems();
+  hideCaret(); snap(); const t = { id: gid(), t: 'x', x: rd(w.x), y: rd(w.y - 14), s: '', z: TXT }; items().push(t); renderItems();
   const el = itemsEl.querySelector(`[data-id="${t.id}"]`); edit(el); if (initial) document.execCommand('insertText', false, initial);
 }
-function edit(el) { el.contentEditable = 'true'; el.focus(); const r = document.createRange(); r.selectNodeContents(el); r.collapse(false); const s = getSelection(); s.removeAllRanges(); s.addRange(r); }
+// Texto plano dentro de un cuadro: un solo nodo de texto, saltos de línea reales
+function splitAtCaret(el) {
+  const full = el.innerText.replace(/\n$/, ''), sel = getSelection();
+  if (!sel.rangeCount) return { before: full, after: '' };
+  const r = document.createRange(); r.selectNodeContents(el); r.setEnd(sel.getRangeAt(0).startContainer, sel.getRangeAt(0).startOffset);
+  const tmp = document.createElement('div'); tmp.style.whiteSpace = 'pre-wrap'; tmp.appendChild(r.cloneContents()); document.body.appendChild(tmp); const before = tmp.innerText; tmp.remove();
+  return { before, after: full.slice(before.length) };
+}
+function setPlain(el, text, caret) {
+  el.textContent = text + (text.endsWith('\n') ? '\n' : '');
+  const tn = el.firstChild, sel = getSelection(), r = document.createRange();
+  if (tn) { r.setStart(tn, Math.min(caret, tn.length)); r.collapse(true); sel.removeAllRanges(); sel.addRange(r); }
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+}
+function editAt(el, e) {
+  edit(el);
+  try {
+    const r = document.caretRangeFromPoint ? document.caretRangeFromPoint(e.clientX, e.clientY) : (() => { const p = document.caretPositionFromPoint?.(e.clientX, e.clientY); if (!p) return null; const x = document.createRange(); x.setStart(p.offsetNode, p.offset); return x; })();
+    if (r && el.contains(r.startContainer)) { r.collapse(true); const s = getSelection(); s.removeAllRanges(); s.addRange(r); }
+  } catch (_) {}
+}
+function edit(el) { el.contentEditable = 'plaintext-only'; if (el.contentEditable !== 'plaintext-only') el.contentEditable = 'true'; el.classList.add('editing'); el.focus(); const r = document.createRange(); r.selectNodeContents(el); r.collapse(false); const s = getSelection(); s.removeAllRanges(); s.addRange(r); }
 const editing = () => document.activeElement && document.activeElement.classList.contains('tx');
 
 /* =================== puntero: escribir y dibujar sin modos =================== */
@@ -170,7 +242,8 @@ function cancelAct() { if (act && act.k === 'draw') { cur.doc.tabs[cur.tab] = it
 function tapAt(e) { const w = toW(e); if (e.pointerType === 'touch') { addText(w); return; } if (isDouble(e, 'bg')) addText(w); else showCaret(w); }
 
 function onDown(e) {
-  if (e.target.closest('button,a') || e.target.closest('.tx[contenteditable=true]')) return;
+  if (e.target.closest('button,a') || e.target.closest('.tx.editing')) return;
+  if (e.target.closest('.tbl') && !e.target.closest('.tbl-h span') && !e.target.classList.contains('rz')) return;
   if (editing()) document.activeElement.blur();
   const isPen = e.pointerType === 'pen', isTouch = e.pointerType === 'touch';
   if (isPen) {
@@ -225,7 +298,7 @@ function onUp(e) {
   act = null; const ok = e.type === 'pointerup';
   if (a.k === 'draw') { if (!a.isPen && a.moved < 4) { cur.doc.tabs[cur.tab] = items().filter(i => i !== a.s); a.el.remove(); hist.pop(); if (ok) tapAt(e); return; } finishStroke(a.s, a.el); dirty(); return; }
   if (a.k === 'pan' && a.tap && ok) { tapAt(e); return; }
-  if (a.k === 'move') { if (a.moved) dirty(); else if (ok && isDouble(e, a.it.id) && a.it.t === 'x') edit(a.el); return; }
+  if (a.k === 'move') { if (a.moved) dirty(); else if (ok && a.it.t === 'x') editAt(a.el, e); return; }
   if (a.k === 'resize' && a.snapped) dirty();
   if (a.k === 'erase') { if (a.hit) dirty(); else hist.pop(); }
 }
@@ -302,7 +375,7 @@ function closeLib() { $('#ntLibPanel').hidden = true; }
 function buildTable() {
   let custom = col.cfg?.props || [];
   table = createTable($('#ntTable'), {
-    key: 'notas', newLabel: 'Nueva nota', newRow: 'Nueva nota', empty: 'Aún no hay notas. Escribe o dibuja en el lienzo y se guardan solas.',
+    key: 'notas', newButton: false, newRow: 'Nueva nota', empty: 'Aún no hay notas. Escribe o dibuja en el lienzo y se guardan solas.',
     defaultHidden: ['updated'],
     views: [{ id: 'all', nombre: 'Todas' }, { id: 'recent', nombre: 'Últimos 7 días', filter: r => Date.now() - (r.updated || r.created) < 7 * 864e5 }, { id: 'files', nombre: 'Con archivos', filter: r => (r.files || []).length > 0 }],
     props: () => [
@@ -336,9 +409,11 @@ export async function mount(el, opts = {}) {
   await col.init(); await tags.init(); tags.system(SYS, 'Áreas');
   buildTable(); syncTools(); newNote();
 
+  // el navegador no debe desplazar el lienzo al enfocar un campo (tablas, textos): solo se mueve con la cámara
+  stage.addEventListener('scroll', () => { if (stage.scrollTop || stage.scrollLeft) { stage.scrollTop = 0; stage.scrollLeft = 0; } });
   stage.addEventListener('pointerdown', onDown); stage.addEventListener('pointermove', onMove);
   stage.addEventListener('pointerup', onUp); stage.addEventListener('pointercancel', onUp);
-  ['touchstart', 'touchmove'].forEach(t => stage.addEventListener(t, e => { if (!e.target.closest('.tx[contenteditable=true]') && !e.target.closest('button,a')) e.preventDefault(); }, { passive: false }));
+  ['touchstart', 'touchmove'].forEach(t => stage.addEventListener(t, e => { if (!e.target.closest('.tx.editing') && !e.target.closest('button,a') && !(e.target.closest('.tbl') && !e.target.closest('.tbl-h span'))) e.preventDefault(); }, { passive: false }));
   stage.addEventListener('contextmenu', e => e.preventDefault());
   stage.addEventListener('wheel', e => { e.preventDefault(); if (e.ctrlKey || e.metaKey) zoomAt(e.clientX, e.clientY, Math.exp(-e.deltaY * .01)); else { cam.x -= e.deltaX; cam.y -= e.deltaY; applyCam(); } }, { passive: false });
   stage.addEventListener('dragover', e => e.preventDefault());
@@ -346,8 +421,17 @@ export async function mount(el, opts = {}) {
   stage.addEventListener('click', e => { const o = e.target.closest('[data-fopen]'), d = e.target.closest('[data-fdrive]'); if (o || d) { const it = items().find(i => i.id === e.target.closest('.it').dataset.id); if (it) openFile(it.f, !!d); } });
 
   itemsEl.addEventListener('input', e => { const el = e.target.closest('.tx'); if (!el) return; const it = items().find(i => i.id === el.dataset.id); if (it) { it.s = el.innerText.replace(/\n$/, ''); dirty(); } });
-  itemsEl.addEventListener('focusout', e => { const el = e.target.closest('.tx'); if (!el) return; el.contentEditable = 'false'; const it = items().find(i => i.id === el.dataset.id); if (it && !it.s.trim()) { cur.doc.tabs[cur.tab] = items().filter(i => i !== it); hist.pop(); renderItems(); dirty(); } });
-  itemsEl.addEventListener('paste', e => { if (!e.target.closest('.tx')) return; const t = e.clipboardData.getData('text/plain'); if (t) { e.preventDefault(); document.execCommand('insertText', false, t); } });
+  itemsEl.addEventListener('focusout', e => { const el = e.target.closest('.tx'); if (!el) return; el.contentEditable = 'false'; el.classList.remove('editing'); const it = items().find(i => i.id === el.dataset.id); if (it && !it.s.trim()) { cur.doc.tabs[cur.tab] = items().filter(i => i !== it); hist.pop(); renderItems(); dirty(); } });
+  itemsEl.addEventListener('keydown', e => {
+    const el = e.target.closest('.tx.editing'); if (!el || e.key !== 'Enter' || e.isComposing) return;
+    e.preventDefault();
+    const { before, after } = splitAtCaret(el);
+    if (e.shiftKey) return setPlain(el, before + '\n' + after, before.length + 1);
+    const line = before.split('\n').pop();
+    if (/^\s*•\s*$/.test(line)) { const b = before.slice(0, before.length - line.length); return setPlain(el, b + after, b.length); } // viñeta vacía: salir de la lista
+    setPlain(el, before + '\n• ' + after, before.length + 3);
+  });
+  itemsEl.addEventListener('paste', e => { const el = e.target.closest('.tx'); if (!el) return; const t = e.clipboardData.getData('text/plain'); if (t) { e.preventDefault(); const { before, after } = splitAtCaret(el); setPlain(el, before + t + after, before.length + t.length); } });
 
   $('#ntTools').addEventListener('click', e => {
     const b = e.target.closest('button'); if (!b) return;
@@ -356,6 +440,10 @@ export async function mount(el, opts = {}) {
     if (b.id === 'ntEraser') eraser = !eraser;
     if (b.id === 'ntShapes') { shapes = !shapes; L.set('shapes', shapes); flash(shapes ? 'Formas: se convierten en limpias' : 'Formas: se quedan a mano'); }
     if (b.id === 'ntText') { addText(caretW || lastW || centerW()); return; }
+    if (b.id === 'ntInsTable') { addTable(caretW || lastW || centerW()); return; }
+    if (b.id === 'ntCopy') { copySel(false); return; }
+    if (b.id === 'ntCut') { copySel(true); return; }
+    if (b.id === 'ntPaste') { pasteClip(); return; }
     if (b.id === 'ntUndo') undo();
     if (b.id === 'ntTrash') delSel();
     syncTools();
@@ -401,16 +489,19 @@ export async function mount(el, opts = {}) {
   document.addEventListener('paste', e => {
     if (!active() || editing() || e.target.closest('input,textarea')) return;
     const fs = [...e.clipboardData.files]; if (fs.length) { e.preventDefault(); attach(fs, caretW || lastW); return; }
-    const t = e.clipboardData.getData('text/plain'); if (t) { e.preventDefault(); addText(caretW || lastW || centerW(), t); }
+    const t = e.clipboardData.getData('text/plain');
+    if (clip && (!t || t === clip._txt)) { e.preventDefault(); pasteClip(caretW || lastW); return; }
+    if (t) { e.preventDefault(); addText(caretW || lastW || centerW(), ''); const el = itemsEl.querySelector('.tx.editing'); if (el) setPlain(el, t, t.length); }
   });
   document.addEventListener('keydown', e => {
     if (!active()) return;
     if (e.key === ' ' && !editing() && !e.target.closest('input') && !caretW) space = true;
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); $('#ntLibPanel').hidden ? openLib() : closeLib(); return; }
     if (e.key === 'Escape') { hideCaret(); eraser = false; syncTools(); if (!$('#ntTagPop').hidden) { $('#ntTagPop').hidden = true; return; } if (!$('#ntLibPanel').hidden) { closeLib(); return; } if (editing()) document.activeElement.blur(); selId = null; markSel(); return; }
-    if (!$('#ntLibPanel').hidden || editing() || e.target.closest('input,textarea,select,[contenteditable=true]')) return;
+    if (!$('#ntLibPanel').hidden || editing() || e.target.closest('input,textarea,select,[contenteditable=true],[contenteditable=plaintext-only],.tbl')) return;
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redoF() : undo(); return; }
     if ((e.key === 'Delete' || e.key === 'Backspace') && selId) { e.preventDefault(); delSel(); return; }
+    if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'c' || e.key.toLowerCase() === 'x') && selId) { e.preventDefault(); copySel(e.key.toLowerCase() === 'x'); return; }
     if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey && !(e.key === ' ' && !caretW)) { e.preventDefault(); addText(caretW || lastW || centerW(), e.key); }
   });
   document.addEventListener('keyup', e => { if (e.key === ' ') space = false; });
