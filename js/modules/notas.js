@@ -54,8 +54,16 @@ const items = () => cur.doc.tabs[cur.tab];
 function isBlank() { return !cur.meta.title.trim() && !cur.meta.tags.length && Object.values(cur.doc.tabs).every(a => !a.length); }
 let saveT;
 function dirty() { clearTimeout(saveT); saveT = setTimeout(saveNow, 600); }
+// Título automático: el primer párrafo del primer cuadro de texto, salvo que lo hayas escrito tú a mano
+function autoTitle() {
+  if (!cur || cur.meta.titleManual) return;
+  const first = cur.meta.tabs.flatMap(t => cur.doc.tabs[t.id] || []).find(i => i.t === 'x' && i.s.trim());
+  const t = first ? first.s.trim().split('\n')[0].replace(/^\s*•\s*/, '').trim().slice(0, 90) : '';
+  if (t !== cur.meta.title) { cur.meta.title = t; const inp = $('#ntTitle'); if (inp && document.activeElement !== inp) inp.value = t; }
+}
 function saveNow() {
   clearTimeout(saveT); if (!cur) return;
+  autoTitle();
   if (!cur.saved && isBlank()) return; cur.saved = true;
   const m = cur.meta, all = m.tabs.flatMap(t => (cur.doc.tabs[t.id] || []).map(i => ({ ...i, tab: t.id })));
   m.text = all.filter(i => (i.t === 'x' && i.s.trim()) || i.t === 'tb').map(i => i.t === 'tb' ? [(i.n || 'Tabla'), ...(i.rows || []).map(r => r.title)].join(', ') : i.s.trim()).join(' · ').slice(0, 3000);
@@ -380,7 +388,7 @@ function buildTable() {
     views: [{ id: 'all', nombre: 'Todas' }, { id: 'recent', nombre: 'Últimos 7 días', filter: r => Date.now() - (r.updated || r.created) < 7 * 864e5 }, { id: 'files', nombre: 'Con archivos', filter: r => (r.files || []).length > 0 }],
     props: () => [
       { id: 'created', nombre: 'Fecha', tipo: 'date', basica: true, readonly: true, get: r => r.created },
-      { id: 'title', nombre: 'Nombre', tipo: 'title', basica: true, get: r => r.title, set: (r, v) => { r.title = v; } },
+      { id: 'title', nombre: 'Nombre', tipo: 'title', basica: true, get: r => r.title, set: (r, v) => { r.title = v; r.titleManual = !!String(v).trim(); } },
       { id: 'area', nombre: 'Área', tipo: 'tags', basica: true, sistema: SYS, get: r => r.tags || [], set: (r, v) => { r.tags = v; } },
       { id: 'files', nombre: 'Archivos', tipo: 'files', basica: true, readonly: true, get: r => r.files || [] },
       { id: 'content', nombre: 'Contenido', tipo: 'content', basica: true, readonly: true, get: r => r.text || (r.ink ? 'Dibujo a mano' : '') },
@@ -389,8 +397,8 @@ function buildTable() {
     custom: () => (col.cfg?.props || custom),
     saveCustom: arr => { custom = arr; col.setCfg({ ...(col.cfg || {}), props: arr }); },
     rows: () => col.list(),
-    save: r => { if (cur && cur.meta.id === r.id) { Object.assign(cur.meta, { title: r.title, tags: r.tags, valores: r.valores }); renderChips(); $('#ntTitle').value = r.title; } col.put(r); },
-    create: nombre => { const t = gid(), m = { id: gid(), title: nombre, tags: [], tabs: [{ id: t, name: 'Hoja 1' }], created: Date.now(), text: '', files: [], valores: {} }; col.put(m, { tabs: { [t]: [] } }); return col.index.get(m.id); },
+    save: r => { if (cur && cur.meta.id === r.id) { Object.assign(cur.meta, { title: r.title, titleManual: r.titleManual, tags: r.tags, valores: r.valores }); renderChips(); $('#ntTitle').value = r.title; } col.put(r); },
+    create: nombre => { const t = gid(), m = { id: gid(), title: nombre, titleManual: !!nombre, tags: [], tabs: [{ id: t, name: 'Hoja 1' }], created: Date.now(), text: '', files: [], valores: {} }; col.put(m, { tabs: { [t]: [] } }); return col.index.get(m.id); },
     open: r => openNote(r.id),
     openFile: (r, f) => openNote(r.id, { tab: f.tab, item: f.item }),
     remove: r => { col.remove(r.id); if (cur?.meta.id === r.id) { cur.saved = false; newNote(); } },
@@ -420,7 +428,7 @@ export async function mount(el, opts = {}) {
   stage.addEventListener('drop', e => { e.preventDefault(); attach([...e.dataTransfer.files], toW(e)); });
   stage.addEventListener('click', e => { const o = e.target.closest('[data-fopen]'), d = e.target.closest('[data-fdrive]'); if (o || d) { const it = items().find(i => i.id === e.target.closest('.it').dataset.id); if (it) openFile(it.f, !!d); } });
 
-  itemsEl.addEventListener('input', e => { const el = e.target.closest('.tx'); if (!el) return; const it = items().find(i => i.id === el.dataset.id); if (it) { it.s = el.innerText.replace(/\n$/, ''); dirty(); } });
+  itemsEl.addEventListener('input', e => { const el = e.target.closest('.tx'); if (!el) return; const it = items().find(i => i.id === el.dataset.id); if (it) { it.s = el.innerText.replace(/\n$/, ''); autoTitle(); dirty(); } });
   itemsEl.addEventListener('focusout', e => { const el = e.target.closest('.tx'); if (!el) return; el.contentEditable = 'false'; el.classList.remove('editing'); const it = items().find(i => i.id === el.dataset.id); if (it && !it.s.trim()) { cur.doc.tabs[cur.tab] = items().filter(i => i !== it); hist.pop(); renderItems(); dirty(); } });
   itemsEl.addEventListener('keydown', e => {
     const el = e.target.closest('.tx.editing'); if (!el || e.key !== 'Enter' || e.isComposing) return;
@@ -452,7 +460,7 @@ export async function mount(el, opts = {}) {
   $('#ntZoom').onclick = resetCam;
   $('#ntLib').onclick = openLib; $('#ntLibClose').onclick = closeLib; $('.nt-lib .scrim', el).onclick = closeLib;
 
-  $('#ntTitle').addEventListener('input', e => { cur.meta.title = e.target.value; dirty(); });
+  $('#ntTitle').addEventListener('input', e => { cur.meta.title = e.target.value; cur.meta.titleManual = !!e.target.value.trim(); if (!cur.meta.titleManual) autoTitle(); dirty(); });
   $('#ntTitle').addEventListener('keydown', e => { if (e.key === 'Enter') e.target.blur(); });
   $('#ntTabs').addEventListener('click', e => {
     const b = e.target.closest('button'); if (!b) return;
@@ -559,7 +567,7 @@ export const agentDef = {
     { name: 'crear_nota', label: 'Creando la nota', description: 'Crea una nota nueva con título, texto opcional y áreas (si un área no existe, se crea con un color libre). Por defecto la abre en pantalla.',
       input_schema: { type: 'object', properties: { titulo: { type: 'string' }, texto: { type: 'string' }, areas: { type: 'array', items: { type: 'string' } }, abrir: { type: 'boolean' } }, required: ['titulo'] },
       run: async ({ titulo, texto, areas = [], abrir = true }) => {
-        const t = gid(), m = { id: gid(), title: titulo, tags: areaIds(areas), tabs: [{ id: t, name: 'Hoja 1' }], created: Date.now(), text: '', files: [], valores: {} };
+        const t = gid(), m = { id: gid(), title: titulo, titleManual: true, tags: areaIds(areas), tabs: [{ id: t, name: 'Hoja 1' }], created: Date.now(), text: '', files: [], valores: {} };
         const items = texto ? [{ id: gid(), t: 'x', x: 80, y: 120, s: texto, z: 18 }] : [];
         m.text = texto || ''; await col.put(m, { tabs: { [t]: items } });
         if (abrir) await openNote(m.id);
