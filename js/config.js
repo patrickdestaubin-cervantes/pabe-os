@@ -8,5 +8,5 @@ export const CONFIG = {
   scope: 'https://www.googleapis.com/auth/drive',
   version: '1.1.0',
   // Cambiar esta fecha = «borrón y cuenta nueva» de los datos guardados en cada dispositivo
-  epoch: '2026-11-16-reset1'
+  epoch: '2026-11-16-reset2'
 };
