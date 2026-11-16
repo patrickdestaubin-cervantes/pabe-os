@@ -46,10 +46,11 @@ export function tagChip(t, x) { return t ? `<span class="tb-tag" style="--c:${t.
 export function createTable(el, cfg) {
   const PK = 'tabla:' + cfg.key;
   let P = {}; if (cfg.prefs) P = cfg.prefs; else { try { P = JSON.parse(localStorage.getItem(PK) || '{}'); } catch (e) {} }
-  P = { order: [], hidden: [], widths: {}, names: {}, sort: null, filters: [], view: cfg.views?.[0]?.id || 'all', calc: {}, ...P };
+  P = { order: [], hidden: [], widths: {}, names: {}, sort: cfg.defaultSort || null, filters: [], view: cfg.views?.[0]?.id || 'all', calc: {}, ...P };
   if (!P.order.length && cfg.defaultHidden) P.hidden = [...cfg.defaultHidden];
   const saveP = () => { if (cfg.savePrefs) { cfg.savePrefs(P); return; } try { localStorage.setItem(PK, JSON.stringify(P)); } catch (e) {} };
-  let q = '', searchOpen = false, editing = null, pop = null;
+  let q = '', searchOpen = false, editing = null, pop = null, formId = null;
+  const openRow = r => { if (!r) return; if (cfg.open) cfg.open(r); else { formId = String(r.id); render(); } };
   const sel = new Set(); // filas seleccionadas para acciones en bloque
 
   const allProps = () => {
@@ -157,8 +158,14 @@ export function createTable(el, cfg) {
       <tbody>${body}<tr class="tb-newrow"><td class="tb-h"></td><td colspan="${vis.length + 1}"><input class="tb-newin" placeholder="+ ${esc(cfg.newRow || 'Nueva')}" aria-label="Nuevo elemento"></td></tr></tbody>
       <tfoot><tr><td class="tb-h"></td>${calc}<td></td></tr></tfoot></table>
       ${!rs.length ? `<div class="tb-empty">${esc(cfg.rows().length ? 'Nada coincide con los filtros.' : cfg.empty || 'Todavía no hay nada.')}</div>` : ''}</div>
-     <div class="tb-cards">${cards || `<div class="tb-empty">${esc(cfg.empty || 'Todavía no hay nada.')}</div>`}</div>`;
+     <div class="tb-cards">${cards || `<div class="tb-empty">${esc(cfg.empty || 'Todavía no hay nada.')}</div>`}</div>${formHtml()}`;
     if (searchOpen) { const i = el.querySelector('.tb-q'); i.focus(); i.setSelectionRange(i.value.length, i.value.length); }
+  }
+  function formHtml() {
+    const r = formId && rowById(formId); if (!r) { formId = null; return ''; }
+    const t = allProps().find(p => p.tipo === 'title');
+    return `<div class="tb-sheet-bg" data-fclose></div><aside class="tb-sheet" role="dialog" aria-label="Ficha"><header><b>${esc(t ? val(r, t) : '') || 'Sin título'}</b><button class="tb-x" data-fclose aria-label="Cerrar">×</button></header>
+     <table class="tb tb-form"><tbody>${allProps().map(p => `<tr data-row="${esc(r.id)}"><th><span class="tb-ti">${TYPES[p.tipo]?.i || ''}</span>${esc(p.nombre)}</th><td data-cell="${p.id}" tabindex="0" class="tb-c tb-${p.tipo}${p.readonly ? ' ro' : ''}">${p.tipo === 'title' ? esc(val(r, p)) || '<span class="tb-ph">Sin título</span>' : cell(r, p)}</td></tr>`).join('')}</tbody></table></aside>`;
   }
   function calcText(p, rs) {
     const k = P.calc[p.id]; if (!k) return '';
@@ -206,6 +213,7 @@ export function createTable(el, cfg) {
       if (p.tipo === 'date') nv = nv || '';
       if (move !== 'cancel' && nv !== (v ?? '')) { p.set(r, nv); cfg.save(r); }
       editing = null; render();
+      if (td.closest('.tb-form')) return;
       if (move === 'tab' || move === 'shift-tab') focusCell(r.id, p.id, move === 'tab' ? 1 : -1, 0);
       if (move === 'enter') focusCell(r.id, p.id, 0, 1);
     };
@@ -237,7 +245,7 @@ export function createTable(el, cfg) {
       const color = pickColor(sys);
       pop.innerHTML = `<div class="tb-pin">${cur.map(id => tagChip(tagStore.get(sys, id), true)).join('')}<input class="tb-pq" placeholder="Buscar o crear…" value="${esc(qq)}"></div>
        <div class="tb-plist">${hits.map(t => `<button class="tb-pi" data-tag="${t.id}">${tagChip(t)}${cur.includes(t.id) ? '<em>✓</em>' : ''}</button>`).join('')}
-       ${nq && !exact ? `<button class="tb-pi" data-create><span class="tb-mut">Crear</span> ${tagChip({ nombre: qq.trim(), color })}</button>` : ''}
+       ${nq && !exact && !p.fixed ? `<button class="tb-pi" data-create><span class="tb-mut">Crear</span> ${tagChip({ nombre: qq.trim(), color })}</button>` : ''}
        ${!hits.length && !nq ? '<p class="tb-mut tb-pad">Escribe para crear la primera.</p>' : ''}</div>`;
       const i = pop.querySelector('.tb-pq'); i.focus(); i.setSelectionRange(i.value.length, i.value.length);
       i.oninput = () => draw(i.value);
@@ -246,10 +254,10 @@ export function createTable(el, cfg) {
         const b = e.target.closest('button'); if (!b) return;
         let next = [...(val(r, p) || [])];
         if (b.dataset.untag) next = next.filter(x => x !== b.dataset.untag);
-        else if (b.dataset.tag) next = next.includes(b.dataset.tag) ? next.filter(x => x !== b.dataset.tag) : [...next, b.dataset.tag];
-        else if ('create' in b.dataset) { const t = tagStore.add(sys, i.value.trim(), color); next.push(t.id); }
+        else if (b.dataset.tag) next = p.single ? (next[0] === b.dataset.tag ? [] : [b.dataset.tag]) : next.includes(b.dataset.tag) ? next.filter(x => x !== b.dataset.tag) : [...next, b.dataset.tag];
+        else if ('create' in b.dataset) { const t = tagStore.add(sys, i.value.trim(), color); next = p.single ? [t.id] : [...next, t.id]; }
         else return;
-        p.set(r, next); cfg.save(r); render(); draw('');
+        p.set(r, next); cfg.save(r); render(); if (p.single && !b.dataset.untag) { closePop(); return; } draw('');
       };
     };
     openPop(anchor, '', true); draw();
@@ -367,13 +375,14 @@ export function createTable(el, cfg) {
   function rowMenu(b) {
     const r = rowById(b.closest('tr').dataset.row);
     openPop(b, `<button class="tb-pi" data-ro>Abrir</button>${(cfg.rowActions || []).map((a, i) => `<button class="tb-pi" data-ra="${i}">${esc(a.label)}</button>`).join('')}${cfg.duplicate ? '<button class="tb-pi" data-rd>Duplicar</button>' : ''}<button class="tb-pi tb-danger" data-rx>Borrar</button>`);
-    pop.onclick = e => { const x = e.target.closest('button'); if (!x) return; if ('ro' in x.dataset) { closePop(); cfg.open(r); } if (x.dataset.ra) { closePop(); cfg.rowActions[+x.dataset.ra].run(r); render(); } if ('rd' in x.dataset) { closePop(); cfg.duplicate(r); render(); } if ('rx' in x.dataset) { if (!confirmIn(x, 'Pulsa otra vez para borrar.')) return; closePop(); cfg.remove(r); render(); } };
+    pop.onclick = e => { const x = e.target.closest('button'); if (!x) return; if ('ro' in x.dataset) { closePop(); openRow(r); } if (x.dataset.ra) { closePop(); cfg.rowActions[+x.dataset.ra].run(r); render(); } if ('rd' in x.dataset) { closePop(); cfg.duplicate(r); render(); } if ('rx' in x.dataset) { if (!confirmIn(x, 'Pulsa otra vez para borrar.')) return; closePop(); cfg.remove(r); render(); } };
   }
 
   /* ---------- eventos ---------- */
   el.addEventListener('click', e => {
     const t = e.target, b = t.closest('button');
     if (t.closest('.tb-sel')) return;
+    if (t.closest('[data-fclose]')) { formId = null; render(); return; }
     if (b?.dataset.view) { P.view = b.dataset.view; saveP(); render(); return; }
     if (b && 'search' in b.dataset) { searchOpen = true; render(); return; }
     if (b && 'addfilter' in b.dataset) return addFilter(b);
@@ -395,11 +404,11 @@ export function createTable(el, cfg) {
       selRows().forEach(r => cfg.remove(r)); sel.clear(); render(); return;
     }
     if (b?.classList.contains('tb-th')) return headMenu(b.closest('th'));
-    if (b && 'open' in b.dataset) { cfg.open(rowById(b.closest('tr').dataset.row)); return; }
+    if (b && 'open' in b.dataset) { openRow(rowById(b.closest('tr').dataset.row)); return; }
     if (b?.dataset.file != null && b.classList.contains('tb-file')) { const tr = b.closest('[data-row]'), r = rowById(tr.dataset.row), p = allProps().find(x => x.id === b.closest('td').dataset.cell); cfg.openFile?.(r, (val(r, p) || [])[+b.dataset.file]); return; }
     if (t.closest('a')) return;
-    const card = t.closest('.tb-card'); if (card) { cfg.open(rowById(card.dataset.row)); return; }
-    const td = t.closest('td.tb-c'); if (td && td.classList.contains('tb-opens')) { cfg.open(rowById(td.closest('tr').dataset.row)); return; }
+    const card = t.closest('.tb-card'); if (card) { openRow(rowById(card.dataset.row)); return; }
+    const td = t.closest('td.tb-c'); if (td && td.classList.contains('tb-opens')) { openRow(rowById(td.closest('tr').dataset.row)); return; }
     if (td && !td.classList.contains('editing')) startEdit(td);
   });
   el.addEventListener('change', e => {

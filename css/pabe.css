@@ -248,3 +248,24 @@ tr:hover .tb-sel input,.tb-sel input:checked,th .tb-sel input,.tb-selrow .tb-sel
 .soon p{max-width:34ch;margin:0 auto}
 .soon-go{display:inline-flex;align-items:center;height:42px;padding:0 18px;margin-top:18px;border-radius:10px;background:var(--ink);color:var(--bg);font-weight:500;text-decoration:none}
 .soon-go:hover{opacity:.9}
+
+/* ---------- Ficha de un elemento (Tabla PABE) ---------- */
+.tb-sheet-bg{position:fixed;inset:0;z-index:45;background:rgba(0,0,0,.18)}
+.tb-sheet{position:fixed;z-index:46;right:0;top:0;bottom:0;width:min(460px,100vw);background:var(--bg);box-shadow:var(--shadow);overflow:auto;padding:calc(16px + env(safe-area-inset-top)) 18px 24px}
+.tb-sheet header{display:flex;align-items:center;gap:10px;margin-bottom:12px}.tb-sheet header b{flex:1;font-size:20px;font-weight:600}
+.tb-form{width:100%;table-layout:fixed}.tb-form th{position:static;width:38%;height:auto;padding:12px 8px;border:0;border-bottom:1px solid var(--line);font-size:14px;color:var(--mut);font-weight:400;vertical-align:top;display:table-cell}
+.tb-form td{border-right:0!important}
+@media (max-width:600px){.tb-sheet{top:auto;height:88vh;width:100%;border-radius:16px 16px 0 0}}
+
+/* ---------- Finanzas ---------- */
+.fin{position:absolute;inset:0;display:flex;flex-direction:column;padding:calc(20px + env(safe-area-inset-top)) clamp(16px,3vw,36px) 84px;overflow:hidden}
+.fin-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-right:220px;margin-bottom:8px}
+.fin-title h1{margin:0 0 6px;font-size:26px;font-weight:600;letter-spacing:-.01em}
+.fin-tabs{display:flex;gap:4px}
+.fin-tab{height:32px;padding:0 12px;border-radius:8px;font-size:14px;color:var(--mut)}.fin-tab:hover{background:var(--soft);color:var(--ink)}.fin-tab.on{background:var(--ink);color:var(--bg)}
+.fin-kpis{display:flex;gap:22px;flex-wrap:wrap}
+.fin-k{display:flex;flex-direction:column;align-items:flex-end}.fin-k span{font-size:12px;color:var(--mut)}.fin-k b{font-size:20px;font-weight:600;font-variant-numeric:tabular-nums}
+.fin-k b.pos{color:var(--pos)}.fin-k b.neg{color:var(--neg)}
+.fin .tb-host{flex:1;display:flex;flex-direction:column;min-height:0}
+@media (max-width:700px){.fin-head{margin-right:0;margin-top:44px}.fin-kpis{gap:14px;width:100%}.fin-k{align-items:flex-start}.fin-k b{font-size:16px}}
+.tb-form th .tb-ti{margin-right:8px}

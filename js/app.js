@@ -3,6 +3,7 @@ import { drive } from './drive.js';
 import { CONFIG } from './config.js';
 import { on, sync, syncNow } from './store.js';
 import * as notas from './modules/notas.js';
+import * as finanzas from './modules/finanzas.js';
 import { agente, mountAgent, pullSettings } from './agente.js';
 
 const $ = s => document.querySelector(s);
@@ -10,7 +11,7 @@ const $ = s => document.querySelector(s);
 // Para añadir uno nuevo: una línea aquí + su botón en el carril (index.html).
 const MODULOS = [
   { id: 'notas', nombre: 'Notas', mod: notas },
-  { id: 'finanzas', nombre: 'Finanzas', descripcion: 'Movimientos, cashflow proyectado, cuentas y patrimonio', url: 'https://claude.ai/artifact/GByXAbiq1NgmQFB3yQxvwQ' },
+  { id: 'finanzas', nombre: 'Finanzas', descripcion: 'Movimientos, cuentas y patrimonio', mod: finanzas },
   { id: 'calendario', nombre: 'Calendario', descripcion: 'En construcción. Pulsa + para abrir una nota.' },
   { id: 'viajes', nombre: 'Viajes', descripcion: 'En construcción. Pulsa + para abrir una nota.' },
 ];
@@ -56,6 +57,8 @@ async function boot() {
   addEventListener('hashchange', () => go(location.hash.slice(1)));
   notas.setActiveCheck(() => current === 'notas');
   await notas.mount(document.querySelector('[data-view=notas]'));
+  await finanzas.mount(document.querySelector('[data-view=finanzas]'));
+  agente.register('finanzas', finanzas.agentDef);
   agente.register('notas', notas.agentDef); agente.setCurrent(() => current || 'notas'); mountAgent();
   go(location.hash.slice(1) || 'notas');
 
