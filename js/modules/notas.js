@@ -1,5 +1,5 @@
 // Módulo 1 — Notas: lienzo infinito (lápiz tipo Nebo, texto, archivos) + biblioteca con la Tabla PABE
-import { collection, tags, files, on } from '../store.js';
+import { collection, tags, files, on, syncNow } from '../store.js';
 import { createTable, pickColor, tagChip, PALETTE } from '../tabla.js';
 
 const col = collection('notas');
@@ -297,7 +297,7 @@ function renderTagPop(msg = '') {
 function openTagPop() { const pop = $('#ntTagPop'); pop.dataset.color = pickColor(SYS); renderTagPop(); const r = $('#ntTagBtn').getBoundingClientRect(); pop.hidden = false; pop.style.left = Math.min(r.left, innerWidth - 292) + 'px'; pop.style.top = (r.bottom + 6) + 'px'; setTimeout(() => $('#ntTName')?.focus(), 0); }
 
 /* =================== biblioteca (Tabla PABE) =================== */
-function openLib() { saveNow(); $('#ntLibPanel').hidden = false; table.render(); }
+function openLib() { saveNow(); $('#ntLibPanel').hidden = false; table.render(); syncNow(); }
 function closeLib() { $('#ntLibPanel').hidden = true; }
 function buildTable() {
   let custom = col.cfg?.props || [];

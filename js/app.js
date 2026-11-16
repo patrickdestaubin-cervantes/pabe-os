@@ -29,7 +29,7 @@ function paintSync() {
   const b = $('#drv'), s = sync.state;
   b.className = 'drv ' + s;
   b.textContent = !drive.configured ? 'Solo en este dispositivo' : s === 'auth' || !drive.ready ? 'Conectar Drive' : s === 'syncing' ? 'Guardando…' : s === 'error' ? (sync.msg || 'Error al guardar') : 'Guardado en Drive';
-  b.title = !drive.configured ? 'Falta configurar el acceso a Google: de momento se guarda solo aquí' : s === 'ok' ? 'Todo guardado en tu Drive personal (06 PABE OS)' : '';
+  b.title = !drive.configured ? 'Falta configurar el acceso a Google: de momento se guarda solo aquí' : s === 'ok' ? 'Todo guardado en tu Drive personal (06 PABE OS). Toca para sincronizar ahora.' : '';
 }
 
 async function boot() {

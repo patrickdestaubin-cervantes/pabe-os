@@ -208,16 +208,22 @@ export async function syncNow() {
   if (running) { again = true; return; }
   running = true; setSync('syncing');
   try {
-    await files.push();
-    await tags.pull(); await tags.push();
-    for (const c of Object.values(cols)) { await c.pull(); await c.push(); }
-    setSync('ok');
+    const work = (async () => {
+      for (const c of Object.values(cols)) await c.pull();   // primero traer lo de otros dispositivos
+      await tags.pull();
+      await files.push(); await tags.push();
+      for (const c of Object.values(cols)) await c.push();
+    })();
+    // si algo se queda colgado (red, permiso de Google), no bloquear la sincronía para siempre
+    await Promise.race([work, new Promise((_, ko) => setTimeout(() => ko(Object.assign(new Error('timeout'), { code: 'timeout' })), 45000))]);
+    sync.last = Date.now(); setSync('ok');
   } catch (e) {
     console.error(e);
     setSync(e.code === 'auth' ? 'auth' : 'error', e.code === 403 ? 'Sin permiso en la carpeta de Drive' : navigator.onLine === false ? 'Sin conexión' : 'No se pudo sincronizar');
   }
   running = false; if (again) { again = false; schedulePush(); }
 }
-setInterval(() => { if (drive.ready && document.visibilityState === 'visible') syncNow(); }, 60000);
+setInterval(() => { if (drive.ready && document.visibilityState === 'visible') syncNow(); }, 15000);
+addEventListener('focus', () => { if (drive.ready) syncNow(); });
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && drive.ready) syncNow(); });
 addEventListener('online', () => syncNow());
