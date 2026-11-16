@@ -271,3 +271,5 @@ tr:hover .tb-sel input,.tb-sel input:checked,th .tb-sel input,.tb-selrow .tb-sel
 .fin .tb-host{flex:1;display:flex;flex-direction:column;min-height:0}
 @media (max-width:700px){.fin-head{margin-right:0;margin-top:44px}.fin-kpis{gap:14px;width:100%}.fin-k{align-items:flex-start}.fin-k b{font-size:16px}}
 .tb-form th .tb-ti{margin-right:8px}
+
+path.mk{mix-blend-mode:multiply}@media (prefers-color-scheme:dark){path.mk{mix-blend-mode:screen}}

@@ -14,12 +14,13 @@ const clone = o => JSON.parse(JSON.stringify(o));
 const PENS = ['ink', '#8B8D98', '#2F6FEB', '#0090FF', '#12A594', '#2B9A66', '#FFC53D', '#F76B15', '#E5484D', '#D6409F', '#8E4EC6', '#AD7F58'];
 const SIZES = [['fino', .7], ['medio', 1], ['grueso', 1.5]];
 const penCss = c => c === 'ink' ? 'var(--ink)' : c;
-const KINDS = { ball: { w: 3 }, fount: { w: 3.6 }, mark: { w: 20 } };
+// brush = pincel (tinta viva con presión, como Nebo), mark = rotulador fosforito. ball/fount: trazos antiguos (se siguen viendo).
+const KINDS = { brush: { w: 8 }, mark: { w: 22 }, ball: { w: 3 }, fount: { w: 3.6 } };
 const L = { get(k) { try { return JSON.parse(localStorage.getItem('pabe:' + k)); } catch (e) { return null; } }, set(k, v) { try { localStorage.setItem('pabe:' + k, JSON.stringify(v)); } catch (e) {} } };
 
 let root, stage, world, ink, itemsEl, caret, toast, table;
 let cur = null, cam = { x: 0, y: 0, k: 1 }, selId = null, hist = [], redo = [];
-let kind = L.get('kind') || 'fount', pen = L.get('pen') || 'ink', penSize = L.get('size') ?? 1, eraser = false, shapes = L.get('shapes') !== false;
+let kind = ['brush', 'mark'].includes(L.get('kind')) ? L.get('kind') : 'brush', pen = L.get('pen') || 'ink', penSize = L.get('size') ?? 1, eraser = false, shapes = L.get('shapes') !== false;
 const urlCache = new Map();
 
 const HTML = `
@@ -32,8 +33,7 @@ const HTML = `
 <div class="nt-side"><button id="ntZoom" class="nt-zoom" title="Restablecer vista">100%</button></div>
 <div class="nt-tabs" id="ntTabs"></div>
 <div class="nt-tools" id="ntTools" role="toolbar" aria-label="Herramientas">
- <button class="tl" data-k="ball" title="Bolígrafo" aria-label="Bolígrafo"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" stroke-linecap="round"><path d="M5 19l2.5-.8L18.5 7.2a1.6 1.6 0 0 0-2.2-2.2L5.3 16z"/></svg></button>
- <button class="tl" data-k="fount" title="Pluma" aria-label="Pluma"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"><path d="M12 2.5l5.5 8L12 21l-5.5-10.5z"/><path d="M12 21v-8.2"/><circle cx="12" cy="11.2" r="1.3"/></svg></button>
+ <button class="tl" data-k="brush" title="Pincel" aria-label="Pincel"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"><path d="M19.5 3.5c-3 1.6-7.4 6-9.3 9l2 2c3-2 7.4-6.4 9-9.3z"/><path d="M10.2 12.5c-2.2-.3-4 1.3-4 3.3 0 1.5-.8 2.6-2.2 3.2 3.6 1.5 8.2.4 8.2-3.4"/></svg></button>
  <button class="tl" data-k="mark" title="Rotulador" aria-label="Rotulador"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"><path d="M9.5 15.5L5 20h4l2.5-2.5"/><path d="M8 13.5L16.5 4l3.5 3.5L10.5 16z"/></svg></button>
  <span class="sepr"></span><button class="sw" id="ntColor" title="Color y grosor" aria-label="Color y grosor"><b></b></button>
  <span class="sepr"></span>
@@ -113,11 +113,22 @@ function outlineD(p) {
   let sx = p[3] - p[0], sy = p[4] - p[1]; const sl = Math.hypot(sx, sy) || 1; sx /= sl; sy /= sl; const hs = p[2] / 2, Rr = Rt.slice().reverse();
   return `M${f(Lf[0][0])} ${f(Lf[0][1])}` + sm(Lf) + `Q${f(ex + dx * he * 1.3)} ${f(ey + dy * he * 1.3)} ${f(Rr[0][0])} ${f(Rr[0][1])}` + sm(Rr) + `Q${f(p[0] - sx * hs * 1.3)} ${f(p[1] - sy * hs * 1.3)} ${f(Lf[0][0])} ${f(Lf[0][1])}Z`;
 }
-const strokeD = s => s.v === 2 ? outlineD(s.p) : s.sh ? polyD(s.p, s.sh !== 'line') : pathD(s.p);
+// Pincel: contorno de ancho variable con puntas redondas (y cola fina si el trazo termina rápido)
+function brushD(p) {
+  const n = p.length / 3, f = rd;
+  if (n < 2) { const r = Math.max(.4, p[2] / 2); return `M${f(p[0] - r)} ${p[1]}a${r} ${r} 0 1 0 ${f(2 * r)} 0a${r} ${r} 0 1 0 ${f(-2 * r)} 0`; }
+  const Lf = [], Rt = [];
+  for (let i = 0; i < n; i++) { const a = Math.max(0, i - 2), b = Math.min(n - 1, i + 2); let dx = p[b * 3] - p[a * 3], dy = p[b * 3 + 1] - p[a * 3 + 1]; const l = Math.hypot(dx, dy) || 1; dx /= l; dy /= l; const h = Math.max(.2, p[i * 3 + 2] / 2), x = p[i * 3], y = p[i * 3 + 1]; Lf.push([x - dy * h, y + dx * h]); Rt.push([x + dy * h, y - dx * h]); }
+  const sm = a => { let d = ''; for (let i = 1; i < a.length - 1; i++) d += `Q${f(a[i][0])} ${f(a[i][1])} ${f((a[i][0] + a[i + 1][0]) / 2)} ${f((a[i][1] + a[i + 1][1]) / 2)}`; const z = a[a.length - 1]; return d + `L${f(z[0])} ${f(z[1])}`; };
+  const Rr = Rt.slice().reverse(), he = Math.max(.2, p[(n - 1) * 3 + 2] / 2), hs = Math.max(.2, p[2] / 2);
+  return `M${f(Lf[0][0])} ${f(Lf[0][1])}` + sm(Lf) + `A${f(he)} ${f(he)} 0 0 0 ${f(Rr[0][0])} ${f(Rr[0][1])}` + sm(Rr) + `A${f(hs)} ${f(hs)} 0 0 0 ${f(Lf[0][0])} ${f(Lf[0][1])}Z`;
+}
+const strokeD = s => s.v === 2 ? (s.k === 'brush' ? brushD(s.p) : outlineD(s.p)) : s.sh ? polyD(s.p, s.sh !== 'line') : pathD(s.p);
 const penColor = c => c === 'ink' ? 'currentColor' : c;
 function mkPath(s) {
   const el = document.createElementNS('http://www.w3.org/2000/svg', 'path'), c = penColor(s.c); el.dataset.id = s.id;
-  const a = s.v === 2 ? { fill: c, stroke: 'none' } : { fill: 'none', stroke: c, 'stroke-width': s.w, 'stroke-opacity': s.k === 'mark' ? .32 : 1 };
+  const a = s.v === 2 ? { fill: c, stroke: 'none' } : { fill: 'none', stroke: s.k === 'mark' && s.c === 'ink' ? '#FFC53D' : c, 'stroke-width': s.w, 'stroke-opacity': s.k === 'mark' ? .4 : 1 };
+  if (s.k === 'mark') el.classList.add('mk');
   for (const k in a) el.setAttribute(k, a[k]); el.setAttribute('d', strokeD(s)); return el;
 }
 const size = b => b > 1e6 ? (b / 1e6).toFixed(1) + ' MB' : Math.max(1, Math.round(b / 1e3)) + ' KB';
@@ -259,8 +270,10 @@ function showCaret(w) { caretW = w; lastW = w; caret.hidden = false; caret.style
 function hideCaret() { if (caret) caret.hidden = true; caretW = null; }
 function isDouble(e, id) { const now = performance.now(), t = lastTap; lastTap = { t: now, x: e.clientX, y: e.clientY, id }; if (t && now - t.t < 380 && Math.hypot(e.clientX - t.x, e.clientY - t.y) < 28 && t.id === id) { lastTap = null; return true; } return false; }
 const baseW = () => KINDS[kind].w * (SIZES[penSize]?.[1] || 1) / cam.k;
+// Ancho del pincel: con el Pencil manda la presión; con dedo o ratón, la velocidad (rápido = más fino)
+function bw(e, v) { const W = baseW(); if (e.pointerType === 'pen' && e.pressure > 0) return W * (.3 + .95 * Math.pow(Math.min(1, e.pressure), .65)) * Math.max(.75, 1 - v * .08); return W * Math.max(.5, Math.min(1.08, 1.12 - v * .3)); }
 function fw(e, v) { const pr = e.pointerType === 'pen' && e.pressure > 0 ? Math.min(1.3, Math.pow(e.pressure, .75) * 1.3) : Math.max(.3, Math.min(1.1, 1.15 - v * .45)); return baseW() * (.28 + 1.05 * pr); }
-function newStroke(w, e) { const s = { id: gid(), t: 's', k: kind, c: pen, w: rd2(baseW()) }; if (kind === 'fount') { s.v = 2; s.p = [rd(w.x), rd(w.y), rd2(fw(e, 0) * .7)]; } else s.p = [rd(w.x), rd(w.y)]; return s; }
+function newStroke(w, e) { const s = { id: gid(), t: 's', k: kind, c: pen, w: rd2(baseW()) }; if (kind === 'brush') { s.v = 2; s.p = [rd(w.x), rd(w.y), rd2(bw(e, 0) * .85)]; } else s.p = [rd(w.x), rd(w.y)]; return s; }
 function cancelAct() { if (act && act.k === 'draw') { cur.doc.tabs[cur.tab] = items().filter(i => i !== act.s); act.el.remove(); hist.pop(); } act = null; }
 function tapAt(e) { const w = toW(e); if (e.pointerType === 'touch') { addText(w); return; } if (isDouble(e, 'bg')) addText(w); else showCaret(w); }
 
@@ -304,10 +317,17 @@ function onMove(e) {
     for (const ev of evs) {
       const d = Math.hypot(ev.clientX - act.lx, ev.clientY - act.ly); if (d < 1) continue;
       const v = d / Math.max(1, ev.timeStamp - act.lt); act.lt = ev.timeStamp; act.lx = ev.clientX; act.ly = ev.clientY; act.moved += d;
-      const w = toW(ev);
-      if (act.s.v === 2) { const pw = p[p.length - 1]; p.push(rd(w.x), rd(w.y), rd2(pw * .55 + fw(ev, v) * .45)); } else p.push(rd(w.x), rd(w.y));
+      const w = toW(ev); act.raw = { x: rd(w.x), y: rd(w.y) };
+      act.v = act.v == null ? v : act.v * .6 + v * .4;
+      // estabilizador suave: quita el temblor sin que el trazo vaya por detrás
+      if (act.s.k === 'brush') { const lx = p[p.length - 3], ly = p[p.length - 2], k = .62; w.x = lx + (w.x - lx) * k; w.y = ly + (w.y - ly) * k; }
+      if (act.s.v === 2) { const pw = p[p.length - 1], nw = act.s.k === 'brush' ? bw(ev, act.v) : fw(ev, v); p.push(rd(w.x), rd(w.y), rd2(pw * .6 + nw * .4)); } else p.push(rd(w.x), rd(w.y));
     }
-    act.el.setAttribute('d', strokeD(act.s)); return;
+    // dibujar también por dónde va a ir el lápiz (menos retraso, como en papel)
+    const pred = act.s.k === 'brush' && e.getPredictedEvents ? e.getPredictedEvents().slice(0, 2) : [];
+    if (pred.length) { const q = { ...act.s, p: p.slice() }; for (const ev of pred) { const w = toW(ev); q.p.push(rd(w.x), rd(w.y), p[p.length - 1]); } act.el.setAttribute('d', strokeD(q)); }
+    else act.el.setAttribute('d', strokeD(act.s));
+    return;
   }
   if (act.k === 'erase') { eraseAt(toW(e)); return; }
   if (act.k === 'move') { const dx = (e.clientX - act.sx) / cam.k, dy = (e.clientY - act.sy) / cam.k; if (!act.moved) { if (Math.hypot(dx, dy) * cam.k < 4) return; snap(); act.moved = true; } act.it.x = rd(act.x0 + dx); act.it.y = rd(act.y0 + dy); act.el.style.left = act.it.x + 'px'; act.el.style.top = act.it.y + 'px'; return; }
@@ -319,14 +339,16 @@ function onUp(e) {
   ptrs.delete(e.pointerId); stage.classList.remove('panning'); if (!act) return;
   const a = act; if (a.k === 'pinch') { if (!ptrs.size) act = null; return; }
   act = null; const ok = e.type === 'pointerup';
-  if (a.k === 'draw') { if (!a.isPen && a.moved < 4) { cur.doc.tabs[cur.tab] = items().filter(i => i !== a.s); a.el.remove(); hist.pop(); if (ok) tapAt(e); return; } finishStroke(a.s, a.el); dirty(); return; }
+  if (a.k === 'draw') { if (!a.isPen && a.moved < 4) { cur.doc.tabs[cur.tab] = items().filter(i => i !== a.s); a.el.remove(); hist.pop(); if (ok) tapAt(e); return; } act0v = a.v; if (a.s.k === 'brush' && a.raw) { const p = a.s.p; p.push(a.raw.x, a.raw.y, p[p.length - 1]); } finishStroke(a.s, a.el); dirty(); return; }
   if (a.k === 'pan' && a.tap && ok) { tapAt(e); return; }
   if (a.k === 'move') { if (a.moved) dirty(); else if (ok && a.it.t === 'x') editAt(a.el, e); return; }
   if (a.k === 'resize' && a.snapped) dirty();
   if (a.k === 'erase') { if (a.hit) dirty(); else hist.pop(); }
 }
+let act0v = 0;
 function finishStroke(s, el) {
-  if (s.v === 2) { const p = s.p, n = p.length / 3;[.45, .6, .75, .9].forEach((f, j) => { if (j < n - 1) p[(n - 1 - j) * 3 + 2] = rd2(p[(n - 1 - j) * 3 + 2] * f); }); }
+  if (s.v === 2 && s.k === 'brush') { const p = s.p, n = p.length / 3, fast = (act0v || 0) > 1.2; if (fast) [.35, .55, .75, .9].forEach((f, j) => { if (j < n - 1) p[(n - 1 - j) * 3 + 2] = rd2(p[(n - 1 - j) * 3 + 2] * f); }); }
+  else if (s.v === 2) { const p = s.p, n = p.length / 3;[.45, .6, .75, .9].forEach((f, j) => { if (j < n - 1) p[(n - 1 - j) * 3 + 2] = rd2(p[(n - 1 - j) * 3 + 2] * f); }); }
   if (shapes && s.k !== 'mark') { const sh = detect(s); if (sh) { hist.push(JSON.stringify(items())); delete s.v; Object.assign(s, sh); } }
   el.replaceWith(mkPath(s));
 }
