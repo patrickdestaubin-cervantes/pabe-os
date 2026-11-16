@@ -180,7 +180,7 @@ async function blobUrl(id) { if (urlCache.has(id)) return urlCache.get(id); cons
 function markSel() {
   itemsEl.querySelectorAll('.sel').forEach(e => e.classList.remove('sel'));
   const el = selId && itemsEl.querySelector(`[data-id="${selId}"]`); if (el) el.classList.add('sel'); else selId = null;
-  $('#ntTrash').hidden = !selId; $('#ntCopy').hidden = !selId; $('#ntCut').hidden = !selId; $('#ntPaste').hidden = !clip || !!selId;
+  $('#ntTrash').hidden = !selId; $('#ntCopy').hidden = !selId; $('#ntCut').hidden = !selId; $('#ntPaste').hidden = !!selId;
 }
 function applyCam() {
   world.style.transform = `translate(${cam.x}px,${cam.y}px) scale(${cam.k})`;
@@ -395,6 +395,67 @@ function eraseAt(w) {
 
 /* =================== archivos =================== */
 const imgDim = u => new Promise(r => { const i = new Image(); i.onload = () => r({ w: i.naturalWidth || 400, h: i.naturalHeight || 300 }); i.onerror = () => r({ w: 400, h: 300 }); i.src = u; });
+/* ---------- pegar y soltar: tablas de cualquier sitio → Tabla PABE ---------- */
+// Reconoce una tabla en lo que llega: HTML (Excel, Google Sheets, webs, Word, Claude…), texto con tabuladores, Markdown o CSV.
+function parseTable(html, text) {
+  const clean = v => String(v ?? '').replace(/\u00a0/g, ' ').replace(/\s+\n/g, '\n').trim();
+  if (html && /<table/i.test(html)) {
+    const doc = new DOMParser().parseFromString(html, 'text/html'), tb = doc.querySelector('table');
+    const rows = [...tb.querySelectorAll('tr')].map(tr => [...tr.children].filter(c => /^(TD|TH)$/.test(c.tagName)).flatMap(c => { const v = clean(c.innerText ?? c.textContent); return Array(Math.min(20, +c.getAttribute('colspan') || 1)).fill('').map((_, i) => i ? '' : v); })).filter(r => r.some(Boolean));
+    if (rows.length >= 2 || (rows[0]?.length || 0) >= 2) return rows;
+  }
+  const t = String(text || '').replace(/\r/g, '').replace(/\n+$/, ''), lines = t.split('\n').filter(l => l.trim());
+  if (lines.length < 2) return null;
+  // Markdown: | a | b |
+  if (lines.filter(l => /^\s*\|.*\|\s*$/.test(l)).length >= lines.length * .8) {
+    return lines.filter(l => !/^\s*\|?\s*:?-{2,}/.test(l.replace(/\|/g, '|'))).filter(l => !/^[\s|:-]+$/.test(l)).map(l => l.trim().replace(/^\||\|$/g, '').split('|').map(clean));
+  }
+  // Texto con tabuladores (lo que copian Excel, Sheets y Numbers)
+  if (lines.filter(l => l.includes('\t')).length >= lines.length * .8) return lines.map(l => l.split('\t').map(clean));
+  // CSV / punto y coma: mismo número de separadores en todas las líneas
+  for (const sep of [';', ',']) { const n = lines[0].split(sep).length; if (n >= 2 && lines.every(l => l.split(sep).length === n)) return lines.map(l => l.split(sep).map(v => clean(v.replace(/^"|"$/g, '')))); }
+  return null;
+}
+const numVal = v => { const m = String(v).replace(/\s|€|EUR/gi, ''); if (!/^-?[\d.,]+$/.test(m)) return null; const n = +(/,\d{1,2}$/.test(m) ? m.replace(/\./g, '').replace(',', '.') : m.replace(/,/g, '')); return isNaN(n) ? null : n; };
+function tableFromRows(rows, w) {
+  const ncol = Math.max(...rows.map(r => r.length)); rows = rows.map(r => [...r, ...Array(ncol - r.length).fill('')]);
+  const head = rows[0], body = rows.slice(1).length ? rows.slice(1) : rows;
+  const props = head.slice(1).map((h, i) => {
+    const vals = body.map(r => r[i + 1]).filter(Boolean), money = vals.some(v => /€|EUR/i.test(v));
+    const tipo = vals.length && vals.every(v => numVal(v) != null) ? (money ? 'money' : 'number') : 'text';
+    return { id: 'p_' + gid(), nombre: h || 'Columna ' + (i + 2), tipo };
+  });
+  hideCaret(); snap();
+  const t = { id: gid(), t: 'tb', x: rd(w.x), y: rd(w.y), w: Math.min(1200, Math.max(520, 200 * ncol)), n: '', props, prefs: head[0] ? { names: { title: head[0] } } : {},
+    rows: body.map(r => ({ id: gid(), title: r[0] || '', created: Date.now(), valores: Object.fromEntries(props.map((p, i) => [p.id, p.tipo === 'text' ? r[i + 1] : (numVal(r[i + 1]) ?? '')])) })) };
+  items().push(t); renderItems(); dirty(); flash('Tabla pegada: ' + body.length + ' filas');
+}
+// Pega o suelta contenido de fuera en el punto w: tabla → Tabla PABE; texto → cuadro de texto; archivos → adjuntos
+async function dropIn(w, { html = '', text = '', files: fs = [] } = {}) {
+  const csv = fs.filter(f => /\.(csv|tsv)$/i.test(f.name)), other = fs.filter(f => !csv.includes(f));
+  for (const f of csv) { const rows = parseTable('', await f.text()); if (rows) tableFromRows(rows, w); else other.push(f); }
+  if (other.length) { attach(other, w); return true; }
+  if (csv.length) return true;
+  const rows = parseTable(html, text); if (rows) { tableFromRows(rows, w); return true; }
+  if (!text && html) text = new DOMParser().parseFromString(html, 'text/html').body.innerText;
+  if (text?.trim()) { addText(w, ''); const el = itemsEl.querySelector('.tx.editing'); if (el) setPlain(el, text.trim(), text.trim().length); return true; }
+  return false;
+}
+// Botón Pegar: primero lo copiado dentro de PABE; si no, el portapapeles del sistema
+async function pasteSystem(w) {
+  let html = '', text = ''; const fs = [];
+  try {
+    for (const it of await navigator.clipboard.read()) for (const ty of it.types) {
+      if (ty === 'text/html') html = await (await it.getType(ty)).text();
+      else if (ty === 'text/plain') text = await (await it.getType(ty)).text();
+      else if (ty.startsWith('image/')) { const b = await it.getType(ty); fs.push(new File([b], 'imagen.' + ty.split('/')[1], { type: ty })); }
+    }
+  } catch (e) { try { text = await navigator.clipboard.readText(); } catch (_) { if (clip) return pasteClip(w); return flash('Permite el acceso al portapapeles para pegar'); } }
+  // lo último copiado dentro de PABE (trazos, tablas, imágenes) tiene su propio portapapeles
+  if (clip && !fs.length && (!text || text === clip._txt)) return pasteClip(w);
+  if (!(await dropIn(w, { html, text, files: fs }))) flash('El portapapeles está vacío');
+}
+
 async function attach(list, w, target) {
   if (!list.length) return;
   w = w || caretW || centerW(); let n = 0; hideCaret();
@@ -471,8 +532,13 @@ export async function mount(el, opts = {}) {
   ['touchstart', 'touchmove'].forEach(t => stage.addEventListener(t, e => { if (!e.target.closest('.tx.editing') && !e.target.closest('button,a') && !(e.target.closest('.tbl') && !e.target.closest('.tbl-h span') && e.touches.length < 2 && t === 'touchstart')) e.preventDefault(); }, { passive: false }));
   stage.addEventListener('contextmenu', e => e.preventDefault());
   stage.addEventListener('wheel', e => { e.preventDefault(); if (e.ctrlKey || e.metaKey) zoomAt(e.clientX, e.clientY, Math.exp(-e.deltaY * .01)); else { cam.x -= e.deltaX; cam.y -= e.deltaY; applyCam(); } }, { passive: false });
-  stage.addEventListener('dragover', e => e.preventDefault());
-  stage.addEventListener('drop', e => { e.preventDefault(); attach([...e.dataTransfer.files], toW(e)); });
+  // Soltar aquí lo que se arrastra desde otra ventana o app (texto, tablas, archivos, imágenes)
+  stage.addEventListener('dragover', e => { if (e.target.closest('.tx.editing,.tbl input')) return; e.preventDefault(); if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'; });
+  stage.addEventListener('drop', e => {
+    if (e.target.closest('.tx.editing,.tbl input')) return;
+    e.preventDefault(); const dt = e.dataTransfer; if (!dt) return;
+    dropIn(toW(e), { files: [...dt.files], html: dt.getData('text/html'), text: dt.getData('text/plain') || dt.getData('text/uri-list') });
+  });
   stage.addEventListener('click', e => { const o = e.target.closest('[data-fopen]'), d = e.target.closest('[data-fdrive]'); if (o || d) { const it = items().find(i => i.id === e.target.closest('.it').dataset.id); if (it) openFile(it.f, !!d); } });
 
   itemsEl.addEventListener('input', e => { const el = e.target.closest('.tx'); if (!el) return; const it = items().find(i => i.id === el.dataset.id); if (it) { it.s = el.innerText.replace(/\n$/, ''); autoTitle(); dirty(); } });
@@ -505,7 +571,7 @@ export async function mount(el, opts = {}) {
     if (b.id === 'ntInsTable') { addTable(caretW || lastW || centerW()); return; }
     if (b.id === 'ntCopy') { copySel(false); return; }
     if (b.id === 'ntCut') { copySel(true); return; }
-    if (b.id === 'ntPaste') { pasteClip(); return; }
+    if (b.id === 'ntPaste') { pasteSystem(caretW || lastW || centerW()); return; }
     if (b.id === 'ntUndo') undo();
     if (b.id === 'ntTrash') delSel();
     syncTools();
@@ -549,11 +615,10 @@ export async function mount(el, opts = {}) {
   $('#ntChips').addEventListener('click', e => { const b = e.target.closest('[data-rm]'); if (!b) return; cur.meta.tags = cur.meta.tags.filter(x => x !== b.dataset.rm); renderChips(); dirty(); });
 
   document.addEventListener('paste', e => {
-    if (!active() || editing() || e.target.closest('input,textarea')) return;
-    const fs = [...e.clipboardData.files]; if (fs.length) { e.preventDefault(); attach(fs, caretW || lastW); return; }
-    const t = e.clipboardData.getData('text/plain');
-    if (clip && (!t || t === clip._txt)) { e.preventDefault(); pasteClip(caretW || lastW); return; }
-    if (t) { e.preventDefault(); addText(caretW || lastW || centerW(), ''); const el = itemsEl.querySelector('.tx.editing'); if (el) setPlain(el, t, t.length); }
+    if (!active() || editing() || e.target.closest?.('input,textarea')) return;
+    const fs = [...e.clipboardData.files], t = e.clipboardData.getData('text/plain'), h = e.clipboardData.getData('text/html');
+    if (clip && !fs.length && (!t || t === clip._txt)) { e.preventDefault(); pasteClip(caretW || lastW); return; }
+    if (fs.length || t || h) { e.preventDefault(); dropIn(caretW || lastW || centerW(), { files: fs, html: h, text: t }); }
   });
   document.addEventListener('keydown', e => {
     if (!active()) return;
