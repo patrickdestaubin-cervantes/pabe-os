@@ -89,3 +89,4 @@
  .cal-mc{padding:2px}.cal-ev{font-size:11px;padding:0 3px}.cal-ev i{display:none}
  .cal-dt{grid-template-columns:1fr 1fr}.cal-dt span{grid-column:1/-1}
 }
+.cal-conn[hidden]{display:none}

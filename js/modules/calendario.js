@@ -1,5 +1,5 @@
 // Módulo Calendario: tu Google Calendar dentro de PABE (día, semana, mes y Tabla PABE). Lo que cambies aquí se guarda en Google Calendar y al revés.
-// Las propiedades propias de PABE (etiquetas, columnas nuevas) se guardan en el Drive: 06 PABE OS/Calendario/_datos.
+// Las propiedades propias de PABE (etiquetas, columnas nuevas) se guardan en el Drive: 06 PABE OS/Calendario/_datos2.
 import { gcal } from '../gcal.js';
 import { collection, tags, kv, on } from '../store.js';
 import { createTable, pickColor, tagChip } from '../tabla.js';
@@ -170,8 +170,10 @@ const HTML = `
 function paintState() {
   const b = $('#calConn', root); if (!b) return;
   b.className = 'cal-conn ' + (gcal.ready ? (loading ? 'syncing' : state) : 'auth');
-  b.textContent = !gcal.configured ? 'Sin acceso a Google' : !gcal.ready ? 'Conectar Google Calendar' : loading ? 'Actualizando…' : state === 'error' ? stateMsg : 'Google Calendar';
+  b.textContent = !gcal.configured ? 'Sin acceso a Google' : !gcal.ready ? 'Conectar Google' : loading ? 'Actualizando…' : state === 'error' ? stateMsg : 'Google Calendar';
   b.title = gcal.ready ? 'Toca para actualizar ahora' : 'Inicia sesión con tu cuenta personal de Google';
+  // dentro de PABE ya está el botón general «Conectar Google»: este solo se ve cuando hay conexión (estado y actualizar)
+  b.hidden = !gcal.ready;
 }
 
 function render() {
@@ -192,7 +194,7 @@ function render() {
   body.innerHTML = view === 'mes' ? monthHTML() : gridHTML(view === 'dia' ? [cursor] : Array.from({ length: 7 }, (_, i) => addDays(weekStart(cursor), i)));
   const sc = body.querySelector('.cal-scroll');
   if (sc) sc.scrollTop = keep ?? Math.max(0, (new Date().getHours() - 1.5) * HOUR_PX);
-  if (state !== 'ok' && !gcal.ready && !events.size) body.insertAdjacentHTML('beforeend', `<div class="cal-empty"><p>Conecta tu Google Calendar para ver aquí tus eventos.</p><button class="cal-pri" data-a="conn">Conectar Google Calendar</button></div>`);
+  if (state !== 'ok' && !gcal.ready && !events.size) body.insertAdjacentHTML('beforeend', `<div class="cal-empty"><p>Conecta tu cuenta de Google para ver aquí tus eventos.</p><button class="cal-pri" data-a="conn">Conectar Google</button></div>`);
 }
 
 function evChip(e, extra = '') {
@@ -307,15 +309,13 @@ function openCals(btn) {
   const r = btn.getBoundingClientRect(), host = root.getBoundingClientRect();
   p.style.top = (r.bottom - host.top + 6) + 'px'; p.style.right = Math.max(8, host.right - r.right) + 'px';
   const draw = () => {
-    p.innerHTML = `<div class="cal-pl">${cals.map(c => `<label class="cal-ck"><input type="checkbox" data-cal="${esc(c.id)}" ${c.on ? 'checked' : ''}><i style="--c:${c.color}"></i>${esc(calName(c))}${writable(c) ? '' : ' <em>solo ver</em>'}</label>`).join('') || '<p class="mut pad">Conecta Google Calendar para ver tus calendarios.</p>'}</div>
-    ${needShare && gcal.ready ? `<p class="cal-tip">El calendario de <b>I&amp;S Homes</b> no está compartido con tu cuenta personal. Desde Google Calendar (cuenta de empresa) → I&amp;S Homes → Configuración y uso compartido → «Compartir con personas»: añade patrick.destaubin@gmail.com con «Hacer cambios en eventos». Luego toca «Volver a buscar».</p><button class="cal-b" data-retry>Volver a buscar</button>` : ''}
-    ${gcal.ready ? '<button class="cal-b cal-out" data-out>Desconectar Google Calendar</button>' : ''}`;
+    p.innerHTML = `<div class="cal-pl">${cals.map(c => `<label class="cal-ck"><input type="checkbox" data-cal="${esc(c.id)}" ${c.on ? 'checked' : ''}><i style="--c:${c.color}"></i>${esc(calName(c))}${writable(c) ? '' : ' <em>solo ver</em>'}</label>`).join('') || '<p class="mut pad">Conecta Google para ver tus calendarios.</p>'}</div>
+    ${needShare && gcal.ready ? `<p class="cal-tip">El calendario de <b>I&amp;S Homes</b> no está compartido con tu cuenta personal. Desde Google Calendar (cuenta de empresa) → I&amp;S Homes → Configuración y uso compartido → «Compartir con personas»: añade patrick.destaubin@gmail.com con «Hacer cambios en eventos». Luego toca «Volver a buscar».</p><button class="cal-b" data-retry>Volver a buscar</button>` : ''}`;
   };
   draw(); p.hidden = false;
   p.onchange = e => { const c = calOf(e.target.dataset.cal); if (c) { c.on = e.target.checked; persist(); render(); if (c.on) refresh(); } };
   p.onclick = async e => {
     if (e.target.closest('[data-retry]')) { L.set('triedEmpresa', false); cals = []; await refresh(); draw(); }
-    if (e.target.closest('[data-out]')) { gcal.signOut(); p.hidden = true; render(); }
   };
 }
 
@@ -424,7 +424,7 @@ export function newEvent() { const n = new Date(); n.setMinutes(0, 0, 0); openEd
 const parseWhen = s => { if (!s) return NaN; return /^\d{4}-\d{2}-\d{2}$/.test(s) ? parseDay(s) : new Date(s.length === 16 ? s + ':00' : s).getTime(); };
 const findCal = name => { if (!name) return defaultCal(); const n = nrm(name); return cals.find(c => nrm(calName(c)) === n || nrm(c.nombre) === n || nrm(c.id) === n) || cals.find(c => nrm(calName(c)).includes(n) || nrm(c.nombre).includes(n)) || (/empresa|trabajo|is homes|i&s/.test(n) ? calOf(EMPRESA) : /personal|mio|mío/.test(n) ? cals.find(c => c.primary) : null); };
 const brief = e => ({ id: e.key, titulo: e.title, calendario: calName(calOf(e.calId)), todo_el_dia: e.allDay, inicio: e.allDay ? ymd(e.start) : ymd(e.start) + ' ' + hm(e.start), fin: e.allDay ? ymd(addDays(e.end, -1)) : ymd(e.end) + ' ' + hm(e.end), lugar: e.loc || undefined, descripcion: e.desc ? e.desc.slice(0, 300) : undefined, etiquetas: tagNames(e.key), periodico: e.recurring || undefined });
-async function ensure(a, b) { if (!gcal.ready) throw new Error('Google Calendar no está conectado: pide a Patrick que toque «Conectar Google Calendar».'); await fetchRange(a, b); }
+async function ensure(a, b) { if (!gcal.ready) throw new Error('Google Calendar no está conectado: pide a Patrick que toque «Conectar Google».'); await fetchRange(a, b); }
 
 export const agentDef = {
   nombre: 'Calendario',

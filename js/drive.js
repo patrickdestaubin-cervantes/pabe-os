@@ -3,7 +3,7 @@ import { CONFIG } from './config.js';
 
 const API = 'https://www.googleapis.com/drive/v3';
 const UP = 'https://www.googleapis.com/upload/drive/v3';
-let token = null, exp = 0, client = null, waiters = [], granted = '';
+let token = null, exp = 0, client = null, waiters = [], granted = '', loading = null;
 const listeners = new Set();
 
 try { const t = JSON.parse(localStorage.getItem('pabe:tok') || sessionStorage.getItem('pabe:tok') || 'null'); if (t && t.exp > Date.now() + 60000 && (t.scope || '').includes('drive.appdata')) { token = t.token; exp = t.exp; granted = t.scope; } } catch (e) {}
@@ -14,12 +14,23 @@ export const drive = {
   get needsRenew() { return !token || exp < Date.now() + 10 * 60000; },
   get email() { try { return localStorage.getItem('pabe:email') || ''; } catch (e) { return ''; } },
   get configured() { return !!CONFIG.clientId; },
+  get token() { return this.ready ? token : null; },
+  // ¿El permiso actual incluye este servicio? (p. ej. 'calendar'). Los permisos antiguos solo traían Drive.
+  has(s) { return this.ready && granted.split(' ').some(x => x.endsWith('/' + s)); },
+  // todo PABE conectado: Drive + Calendar
+  get full() { return this.has('drive') && this.has('calendar'); },
+  expire() { token = null; exp = 0; try { localStorage.removeItem('pabe:tok'); } catch (e) {} listeners.forEach(f => f(false)); },
   onAuth(fn) { listeners.add(fn); return () => listeners.delete(fn); },
   hadSession() { try { return localStorage.getItem('pabe:hadSession') === '1'; } catch (e) { return false; } },
 
   // Carga la librería de Google y prepara el cliente
   async load() {
     if (!CONFIG.clientId) return false;
+    if (client) return true;
+    if (loading) return loading;
+    return (loading = this._load());
+  },
+  async _load() {
     if (!window.google?.accounts?.oauth2) {
       await new Promise((ok, ko) => { const s = document.createElement('script'); s.src = 'https://accounts.google.com/gsi/client'; s.async = true; s.onload = ok; s.onerror = ko; document.head.appendChild(s); });
     }

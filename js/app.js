@@ -4,6 +4,7 @@ import { CONFIG } from './config.js';
 import { on, sync, syncNow } from './store.js';
 import * as notas from './modules/notas.js';
 import * as finanzas from './modules/finanzas.js';
+import * as calendario from './modules/calendario.js';
 import { agente, mountAgent, pullSettings } from './agente.js';
 
 const $ = s => document.querySelector(s);
@@ -12,7 +13,7 @@ const $ = s => document.querySelector(s);
 const MODULOS = [
   { id: 'notas', nombre: 'Notas', mod: notas },
   { id: 'finanzas', nombre: 'Finanzas', descripcion: 'Movimientos, cuentas y patrimonio', mod: finanzas },
-  { id: 'calendario', nombre: 'Calendario', descripcion: 'En construcción. Pulsa + para abrir una nota.' },
+  { id: 'calendario', nombre: 'Calendario', descripcion: 'Tu Google Calendar: Personal e I&S Homes', mod: calendario },
   { id: 'viajes', nombre: 'Viajes', descripcion: 'En construcción. Pulsa + para abrir una nota.' },
 ];
 const MODS = Object.fromEntries(MODULOS.map(m => [m.id, m]));
@@ -38,8 +39,8 @@ function go(m, keep) {
 function paintSync() {
   const b = $('#drv'), s = sync.state;
   b.className = 'drv ' + s;
-  b.textContent = !drive.configured ? 'Solo en este dispositivo' : s === 'auth' || !drive.ready ? 'Conectar Drive' : s === 'syncing' ? 'Guardando…' : s === 'error' ? (sync.msg || 'Error al guardar') : 'Guardado en Drive';
-  b.title = !drive.configured ? 'Falta configurar el acceso a Google: de momento se guarda solo aquí' : s === 'ok' ? 'Todo guardado en tu Drive personal (06 PABE OS). Toca para sincronizar ahora.' : '';
+  b.textContent = !drive.configured ? 'Solo en este dispositivo' : s === 'auth' || !drive.full ? 'Conectar Google' : s === 'syncing' ? 'Guardando…' : s === 'error' ? (sync.msg || 'Error al guardar') : 'Guardado en Drive';
+  b.title = !drive.configured ? 'Falta configurar el acceso a Google: de momento se guarda solo aquí' : s === 'ok' ? 'Todo guardado en tu Drive personal (06 PABE OS). Toca para sincronizar ahora.' : !drive.full ? 'Un solo inicio de sesión para Drive y Google Calendar' : '';
 }
 
 // Borrón y cuenta nueva: si cambia CONFIG.epoch, se vacía la copia local de este dispositivo (Drive manda)
@@ -53,12 +54,15 @@ async function resetIfNeeded() {
 async function boot() {
   await resetIfNeeded();
   $('#rail').addEventListener('click', e => { const b = e.target.closest('.mod'); if (b) go(b.dataset.m); });
-  $('#plus').onclick = () => { if (current !== 'notas') go('notas'); else notas.enter(); };
+  // «+»: en Calendario crea un evento; en el resto, una nota nueva
+  $('#plus').onclick = () => { if (current === 'calendario') return calendario.newEvent(); if (current !== 'notas') go('notas'); else notas.enter(); };
   addEventListener('hashchange', () => go(location.hash.slice(1)));
   notas.setActiveCheck(() => current === 'notas');
   await notas.mount(document.querySelector('[data-view=notas]'));
   await finanzas.mount(document.querySelector('[data-view=finanzas]'));
+  await calendario.mount(document.querySelector('[data-view=calendario]'));
   agente.register('finanzas', finanzas.agentDef);
+  agente.register('calendario', calendario.agentDef);
   agente.register('notas', notas.agentDef); agente.setCurrent(() => current || 'notas'); mountAgent();
   go(location.hash.slice(1) || 'notas');
 
@@ -66,7 +70,8 @@ async function boot() {
   paintSync();
   $('#drv').onclick = async () => {
     if (!drive.configured) { const t = document.getElementById('toast'); t.textContent = 'Aún no está conectado a tu Drive: cada dispositivo guarda solo lo suyo'; t.classList.add('on'); setTimeout(() => t.classList.remove('on'), 4000); return; }
-    if (!drive.ready) { const ok = await drive.signIn(!drive.hadSession() ? false : true); if (!ok) { const ok2 = await drive.signIn(false); if (!ok2) return; } }
+    // Un solo botón para todo Google (Drive + Calendar). Si falta algún permiso, se pide de una vez.
+    if (!drive.full) { let ok = drive.hadSession() ? await drive.signIn(true) : false; if (!ok || !drive.full) ok = await drive.signIn(false); if (!ok) return; }
     syncNow();
   };
   if (drive.configured) { await drive.load().catch(() => {}); if (drive.ready) { syncNow(); pullSettings(); } paintSync(); }
