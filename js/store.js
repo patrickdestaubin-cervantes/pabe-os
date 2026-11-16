@@ -28,6 +28,9 @@ const blobs = {
 };
 
 /* ---------- eventos ---------- */
+// Carpeta de datos de cada módulo (cambia con cada «borrón y cuenta nueva»)
+const DATA_DIR = '_datos2';
+
 const subs = {};
 export function on(ev, fn) { (subs[ev] = subs[ev] || new Set()).add(fn); return () => subs[ev].delete(fn); }
 function emit(ev, d) { (subs[ev] || []).forEach(f => { try { f(d); } catch (e) { console.error(e); } }); }
@@ -38,7 +41,7 @@ function setSync(state, msg = '') { sync.state = state; sync.msg = msg; emit('sy
 
 /* ---------- carpetas en Drive ---------- */
 let folderIds = null;
-async function folder(path) { // path: ['Notas','_datos']
+async function folder(path) { // path: ['Notas',DATA_DIR]
   folderIds = folderIds || (await kv.get('drive:folders')) || {};
   let parent = CONFIG.rootFolder, key = '';
   for (const p of path) {
@@ -92,7 +95,7 @@ class Collection {
   }
   // Trae de Drive: ajustes, índice y, si cambió, los documentos
   async pull() {
-    const dir = await folder([this.label(), '_datos']);
+    const dir = await folder([this.label(), DATA_DIR]);
     const cid = await fileId('ajustes.json', dir);
     if (cid) { const rc = await drive.readJSON(cid), lc = await this.getCfg(); if ((rc.updated || 0) > (lc.updated || 0) && !this.cfgDirty) { this.cfg = rc; await kv.set(this.name + ':cfg', rc); emit('cfg', { col: this.name }); } }
     const iid = await fileId('index.json', dir);
@@ -112,19 +115,19 @@ class Collection {
   async load(id) {
     const local = await this.get(id); if (local) return local;
     if (!drive.ready) return null;
-    const dir = await folder([this.label(), '_datos']);
+    const dir = await folder([this.label(), DATA_DIR]);
     const fid = await fileId(id + '.json', dir); if (!fid) return null;
     const d = await drive.readJSON(fid); await kv.set(this.name + ':doc:' + id, d); return d;
   }
   async push() {
     if (this.cfgDirty === undefined) this.cfgDirty = !!(await kv.get(this.name + ':cfgDirty'));
     if (this.cfgDirty) {
-      const dir0 = await folder([this.label(), '_datos']), cid = await fileId('ajustes.json', dir0);
+      const dir0 = await folder([this.label(), DATA_DIR]), cid = await fileId('ajustes.json', dir0);
       const r0 = await drive.writeJSON('ajustes.json', dir0, await this.getCfg(), cid); if (!cid) await rememberFile('ajustes.json', dir0, r0.id);
       this.cfgDirty = false; await kv.set(this.name + ':cfgDirty', false);
     }
     if (!this.dirty.size) return;
-    const dir = await folder([this.label(), '_datos']);
+    const dir = await folder([this.label(), DATA_DIR]);
     for (const id of [...this.dirty]) {
       const m = this.index.get(id), doc = await this.get(id);
       if (m && !m.deleted && doc) {
