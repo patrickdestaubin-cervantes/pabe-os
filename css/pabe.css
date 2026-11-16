@@ -222,3 +222,19 @@ tr:hover .tb-open{display:block}.tb-open:hover{color:var(--ink)}
 .tbl .tb-cards{display:none!important}.tbl .tb-wrap{display:block!important}
 
 .tb td.tb-opens{cursor:pointer}.tb td.tb-opens:hover .tb-ttl{text-decoration-color:var(--ink)}
+
+/* ---------- Selección y acciones en bloque (Tabla PABE) ---------- */
+.tb-h{width:56px!important;white-space:nowrap}
+.tb-sel{display:inline-grid;place-items:center;width:28px;height:42px;vertical-align:top;cursor:pointer}
+.tb-sel input{width:16px;height:16px;accent-color:#2383e2;cursor:pointer;opacity:.35}
+tr:hover .tb-sel input,.tb-sel input:checked,th .tb-sel input,.tb-selrow .tb-sel input{opacity:1}
+@media (hover:none){.tb-sel input{opacity:.8}.tb-grip{opacity:.6}}
+.tb-grip{width:24px;font-size:16px;letter-spacing:0}
+.tb tbody tr.tb-selrow td{background:color-mix(in srgb,#2383e2 7%,transparent)}
+.tb-bulk{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:8px 10px;margin:10px 0 2px;border-radius:9px;background:color-mix(in srgb,#2383e2 10%,transparent);font-size:14px}
+.tb-bulk b{font-weight:600;color:#1f6fc5;margin-right:6px}
+.tb-bulk button{height:30px;padding:0 10px;border-radius:7px;background:var(--pop);border:1px solid var(--line);font-size:13px}
+.tb-bulk button.tb-x{border:0;background:none;width:28px;padding:0}
+.tb-bulk .tb-danger{color:var(--neg)}
+.tb-mini{width:auto!important;min-height:28px!important;font-size:12px!important;color:#1f6fc5}
+.tb-card{position:relative;padding-left:44px!important}.tb-cardsel{position:absolute;left:8px;top:6px}

@@ -50,6 +50,7 @@ export function createTable(el, cfg) {
   if (!P.order.length && cfg.defaultHidden) P.hidden = [...cfg.defaultHidden];
   const saveP = () => { if (cfg.savePrefs) { cfg.savePrefs(P); return; } try { localStorage.setItem(PK, JSON.stringify(P)); } catch (e) {} };
   let q = '', searchOpen = false, editing = null, pop = null;
+  const sel = new Set(); // filas seleccionadas para acciones en bloque
 
   const allProps = () => {
     const base = cfg.props(), cus = (cfg.custom() || []).map(c => ({ ...c, custom: true, get: r => r.valores?.[c.id], set: (r, v) => { r.valores = { ...(r.valores || {}), [c.id]: v }; } }));
@@ -141,18 +142,18 @@ export function createTable(el, cfg) {
     const sortChip = P.sort ? (() => { const p = allProps().find(x => x.id === P.sort.id); return p ? `<span class="tb-fchip tb-sortchip"><button data-sortflip>${P.sort.dir > 0 ? '↑' : '↓'} ${esc(p.nombre)}</button><button class="tb-x" data-sortdel aria-label="Quitar orden">×</button></span>` : ''; })() : '';
     const cols = vis.map(p => `<col style="width:${P.widths[p.id] || (p.tipo === 'title' ? 260 : p.tipo === 'content' ? 320 : p.tipo === 'check' ? 90 : 170)}px">`).join('');
     const head = vis.map(p => `<th data-prop="${p.id}" draggable="true"><button class="tb-th"><span class="tb-ti">${TYPES[p.tipo]?.i || ''}</span>${esc(p.nombre)}${P.sort?.id === p.id ? (P.sort.dir > 0 ? ' ↑' : ' ↓') : ''}</button><span class="tb-rz" data-rz="${p.id}"></span></th>`).join('');
-    const body = rs.map(r => `<tr data-row="${esc(r.id)}"><td class="tb-h"><button class="tb-grip" data-rmenu aria-label="Acciones">⋮⋮</button></td>${vis.map(p => `<td data-cell="${p.id}" tabindex="0" class="tb-c tb-${p.tipo}${p.readonly ? ' ro' : ''}${p.opens ? ' tb-opens' : ''}">${cell(r, p)}</td>`).join('')}<td></td></tr>`).join('');
+    const body = rs.map(r => `<tr data-row="${esc(r.id)}"${sel.has(String(r.id)) ? ' class="tb-selrow"' : ''}><td class="tb-h"><label class="tb-sel"><input type="checkbox" class="tb-rchk" data-sel="${esc(r.id)}" ${sel.has(String(r.id)) ? 'checked' : ''} aria-label="Seleccionar"></label><button class="tb-grip" data-rmenu aria-label="Acciones">⋮</button></td>${vis.map(p => `<td data-cell="${p.id}" tabindex="0" class="tb-c tb-${p.tipo}${p.readonly ? ' ro' : ''}${p.opens ? ' tb-opens' : ''}">${cell(r, p)}</td>`).join('')}<td></td></tr>`).join('');
     const calc = vis.map(p => `<td><button class="tb-calc" data-calc="${p.id}">${calcText(p, rs) || '<span>Calcular</span>'}</button></td>`).join('');
-    const cards = rs.map(r => { const t = vis.find(p => p.tipo === 'title'); const rest = vis.filter(p => p !== t && p.tipo !== 'content').slice(0, 4); return `<div class="tb-card" data-row="${esc(r.id)}"><div class="tb-cardt">${t ? esc(val(r, t)) || 'Sin título' : ''}</div>${rest.map(p => { const h = cell(r, p); return h && p.tipo !== 'check' ? `<div class="tb-cardp"><span>${esc(p.nombre)}</span><span>${h}</span></div>` : ''; }).join('')}</div>`; }).join('');
+    const cards = rs.map(r => { const t = vis.find(p => p.tipo === 'title'); const rest = vis.filter(p => p !== t && p.tipo !== 'content').slice(0, 4); return `<div class="tb-card${sel.has(String(r.id)) ? ' tb-selrow' : ''}" data-row="${esc(r.id)}"><label class="tb-sel tb-cardsel"><input type="checkbox" class="tb-rchk" data-sel="${esc(r.id)}" ${sel.has(String(r.id)) ? 'checked' : ''} aria-label="Seleccionar"></label><div class="tb-cardt">${t ? esc(val(r, t)) || 'Sin título' : ''}</div>${rest.map(p => { const h = cell(r, p); return h && p.tipo !== 'check' ? `<div class="tb-cardp"><span>${esc(p.nombre)}</span><span>${h}</span></div>` : ''; }).join('')}</div>`; }).join('');
     el.innerHTML = `
      <div class="tb-bar">${views}<div class="tb-tools">
       <button class="tb-tool" data-addfilter>Filtro</button><button class="tb-tool" data-addsort>Ordenar</button>
       ${searchOpen ? `<input class="tb-q" type="search" placeholder="Buscar" value="${esc(q)}">` : `<button class="tb-tool" data-search aria-label="Buscar">⌕</button>`}
       <button class="tb-tool" data-colsmenu aria-label="Columnas">⋯</button>
       ${cfg.newButton === false ? '' : `<button class="tb-new" data-new>${esc(cfg.newLabel || 'Nuevo')}</button>`}</div></div>
-     ${chips || sortChip ? `<div class="tb-chips">${sortChip}${chips}</div>` : ''}
-     <div class="tb-wrap"><table class="tb"><colgroup><col style="width:34px">${cols}<col></colgroup>
-      <thead><tr><th class="tb-h"></th>${head}<th class="tb-plus"><button data-addprop aria-label="Nueva propiedad">+</button></th></tr></thead>
+     ${sel.size ? `<div class="tb-bulk"><b>${sel.size} ${sel.size === 1 ? 'seleccionada' : 'seleccionadas'}</b><button data-bprop>Editar propiedad</button>${cfg.duplicate ? '<button data-bdup>Duplicar</button>' : ''}<button data-bdel class="tb-danger">Eliminar</button><button class="tb-x" data-bclr aria-label="Quitar selección">×</button></div>` : chips || sortChip ? `<div class="tb-chips">${sortChip}${chips}</div>` : ''}
+     <div class="tb-wrap"><table class="tb"><colgroup><col style="width:56px">${cols}<col></colgroup>
+      <thead><tr><th class="tb-h"><label class="tb-sel"><input type="checkbox" class="tb-allchk" ${rs.length && rs.every(r => sel.has(String(r.id))) ? 'checked' : ''} aria-label="Seleccionar todas"></label></th>${head}<th class="tb-plus"><button data-addprop aria-label="Nueva propiedad">+</button></th></tr></thead>
       <tbody>${body}<tr class="tb-newrow"><td class="tb-h"></td><td colspan="${vis.length + 1}"><input class="tb-newin" placeholder="+ ${esc(cfg.newRow || 'Nueva')}" aria-label="Nuevo elemento"></td></tr></tbody>
       <tfoot><tr><td class="tb-h"></td>${calc}<td></td></tr></tfoot></table>
       ${!rs.length ? `<div class="tb-empty">${esc(cfg.rows().length ? 'Nada coincide con los filtros.' : cfg.empty || 'Todavía no hay nada.')}</div>` : ''}</div>
@@ -330,6 +331,39 @@ export function createTable(el, cfg) {
     openPop(b, `<button class="tb-pi" data-c="">Ninguno</button><button class="tb-pi" data-c="count">Rellenos</button><button class="tb-pi" data-c="empty">Vacíos</button>${num ? '<button class="tb-pi" data-c="sum">Suma</button><button class="tb-pi" data-c="avg">Media</button>' : ''}`);
     pop.onclick = e => { const x = e.target.closest('[data-c]'); if (!x) return; P.calc[p.id] = x.dataset.c; saveP(); closePop(); render(); };
   }
+  const selRows = () => cfg.rows().filter(r => sel.has(String(r.id)));
+  // Editar una propiedad en todas las filas seleccionadas
+  function bulkProp(anchor) {
+    const props = allProps().filter(p => !p.readonly && !['content', 'files', 'title'].includes(p.tipo));
+    openPop(anchor, `<div class="tb-sub">Cambiar en ${sel.size}</div>${props.map(p => `<button class="tb-pi" data-bp="${p.id}"><span class="tb-ti">${TYPES[p.tipo].i}</span> ${esc(p.nombre)}</button>`).join('') || '<p class="tb-mut tb-pad">No hay propiedades editables. Crea una con el + de la cabecera.</p>'}`);
+    pop.onclick = e => { const x = e.target.closest('[data-bp]'); if (x) bulkValue(anchor, props.find(p => p.id === x.dataset.bp)); };
+  }
+  function bulkValue(anchor, p) {
+    const apply = fn => { selRows().forEach(r => { fn(r); cfg.save(r); }); render(); };
+    if (p.tipo === 'tags') {
+      const draw = (qq = '') => {
+        const list = tagStore.list(p.sistema), nq = norm(qq).trim(), hits = list.filter(t => !nq || norm(t.nombre).includes(nq)), exact = list.some(t => norm(t.nombre) === nq), color = pickColor(p.sistema);
+        pop.innerHTML = `<div class="tb-sub">${esc(p.nombre)} · ${sel.size} seleccionadas</div><input class="tb-rn" placeholder="Buscar o crear…" value="${esc(qq)}">
+          ${hits.map(t => `<div class="tb-frow">${tagChip(t)}<span style="flex:1"></span><button class="tb-pi tb-mini" data-add="${t.id}">Añadir</button><button class="tb-pi tb-mini" data-del="${t.id}">Quitar</button></div>`).join('')}
+          ${nq && !exact ? `<button class="tb-pi" data-create><span class="tb-mut">Crear y añadir</span> ${tagChip({ nombre: qq.trim(), color })}</button>` : ''}`;
+        const i = pop.querySelector('.tb-rn'); i.focus(); i.setSelectionRange(i.value.length, i.value.length); i.oninput = () => draw(i.value);
+        pop.onclick = e => {
+          const x = e.target.closest('button'); if (!x) return;
+          if (x.dataset.add) apply(r => { const v = val(r, p) || []; if (!v.includes(x.dataset.add)) p.set(r, [...v, x.dataset.add]); });
+          if (x.dataset.del) apply(r => p.set(r, (val(r, p) || []).filter(id => id !== x.dataset.del)));
+          if ('create' in x.dataset) { const t = tagStore.add(p.sistema, i.value.trim(), color); apply(r => p.set(r, [...(val(r, p) || []), t.id])); draw(''); return; }
+          x.textContent = '✓';
+        };
+      };
+      openPop(anchor, '', true); draw(); return;
+    }
+    if (p.tipo === 'check') { openPop(anchor, `<div class="tb-sub">${esc(p.nombre)}</div><button class="tb-pi" data-v="1">Marcar todas</button><button class="tb-pi" data-v="0">Desmarcar todas</button>`); pop.onclick = e => { const x = e.target.closest('[data-v]'); if (x) { apply(r => p.set(r, x.dataset.v === '1')); closePop(); } }; return; }
+    const isNum = ['number', 'money'].includes(p.tipo);
+    openPop(anchor, `<div class="tb-sub">${esc(p.nombre)} · ${sel.size} seleccionadas</div><input class="tb-rn" ${p.tipo === 'date' ? 'type="date"' : isNum ? 'inputmode="decimal"' : ''} placeholder="Nuevo valor (vacío = borrar)"><button class="tb-btn" data-ok>Aplicar a todas</button>`, true);
+    const i = pop.querySelector('.tb-rn'); i.focus();
+    const ok = () => { let v = i.value; if (isNum) v = v.trim() === '' ? '' : +v.replace(/\./g, '').replace(',', '.') || 0; apply(r => p.set(r, v)); closePop(); };
+    i.onkeydown = e => { if (e.key === 'Enter') ok(); }; pop.onclick = e => { if (e.target.closest('[data-ok]')) ok(); };
+  }
   function rowMenu(b) {
     const r = rowById(b.closest('tr').dataset.row);
     openPop(b, `<button class="tb-pi" data-ro>Abrir</button>${(cfg.rowActions || []).map((a, i) => `<button class="tb-pi" data-ra="${i}">${esc(a.label)}</button>`).join('')}${cfg.duplicate ? '<button class="tb-pi" data-rd>Duplicar</button>' : ''}<button class="tb-pi tb-danger" data-rx>Borrar</button>`);
@@ -339,6 +373,7 @@ export function createTable(el, cfg) {
   /* ---------- eventos ---------- */
   el.addEventListener('click', e => {
     const t = e.target, b = t.closest('button');
+    if (t.closest('.tb-sel')) return;
     if (b?.dataset.view) { P.view = b.dataset.view; saveP(); render(); return; }
     if (b && 'search' in b.dataset) { searchOpen = true; render(); return; }
     if (b && 'addfilter' in b.dataset) return addFilter(b);
@@ -352,6 +387,13 @@ export function createTable(el, cfg) {
     if (b && 'sortdel' in b.dataset) { P.sort = null; saveP(); render(); return; }
     if (b?.dataset.calc) return calcMenu(b);
     if (b && 'rmenu' in b.dataset) return rowMenu(b);
+    if (b && 'bclr' in b.dataset) { sel.clear(); render(); return; }
+    if (b && 'bprop' in b.dataset) return bulkProp(b);
+    if (b && 'bdup' in b.dataset) { selRows().forEach(r => cfg.duplicate(r)); sel.clear(); render(); return; }
+    if (b && 'bdel' in b.dataset) {
+      if (!b.dataset.armed) { b.dataset.armed = 1; b.textContent = `¿Eliminar ${sel.size}? Pulsa otra vez`; return; }
+      selRows().forEach(r => cfg.remove(r)); sel.clear(); render(); return;
+    }
     if (b?.classList.contains('tb-th')) return headMenu(b.closest('th'));
     if (b && 'open' in b.dataset) { cfg.open(rowById(b.closest('tr').dataset.row)); return; }
     if (b?.dataset.file != null && b.classList.contains('tb-file')) { const tr = b.closest('[data-row]'), r = rowById(tr.dataset.row), p = allProps().find(x => x.id === b.closest('td').dataset.cell); cfg.openFile?.(r, (val(r, p) || [])[+b.dataset.file]); return; }
@@ -360,6 +402,11 @@ export function createTable(el, cfg) {
     const td = t.closest('td.tb-c'); if (td && td.classList.contains('tb-opens')) { cfg.open(rowById(td.closest('tr').dataset.row)); return; }
     if (td && !td.classList.contains('editing')) startEdit(td);
   });
+  el.addEventListener('change', e => {
+    if (e.target.classList.contains('tb-rchk')) { const id = e.target.dataset.sel; e.target.checked ? sel.add(id) : sel.delete(id); render(); }
+    if (e.target.classList.contains('tb-allchk')) { const ids = rows().map(r => String(r.id)); e.target.checked ? ids.forEach(i => sel.add(i)) : ids.forEach(i => sel.delete(i)); render(); }
+  });
+  el.addEventListener('keydown', e => { if (e.key === 'Escape' && sel.size && !pop && !editing) { sel.clear(); render(); } });
   el.addEventListener('keydown', e => {
     const td = e.target.closest?.('td.tb-c'); if (td && e.target === td && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); startEdit(td); }
   });
