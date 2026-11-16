@@ -243,3 +243,8 @@ tr:hover .tb-sel input,.tb-sel input:checked,th .tb-sel input,.tb-selrow .tb-sel
 .tb-cardct{font-size:14px;line-height:1.45;color:var(--mut);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;margin:2px 0 4px}
 .tb-cardct .tb-ct{color:var(--mut)}
 .tb-carddate{font-size:12px;color:var(--mut)}
+
+.soon-ic{display:grid;place-items:center;width:84px;height:84px;margin:0 auto 14px;border-radius:22px;background:var(--soft);color:var(--ink)}
+.soon p{max-width:34ch;margin:0 auto}
+.soon-go{display:inline-flex;align-items:center;height:42px;padding:0 18px;margin-top:18px;border-radius:10px;background:var(--ink);color:var(--bg);font-weight:500;text-decoration:none}
+.soon-go:hover{opacity:.9}

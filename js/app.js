@@ -6,12 +6,20 @@ import * as notas from './modules/notas.js';
 import { agente, mountAgent, pullSettings } from './agente.js';
 
 const $ = s => document.querySelector(s);
-const MODS = {
-  notas: { nombre: 'Notas', mod: notas },
-  finanzas: { nombre: 'Finanzas' },
-  calendario: { nombre: 'Calendario' },
-  viajes: { nombre: 'Viajes' },
-};
+// Módulos de PABE. «mod»: módulo ya integrado en esta web. «url»: módulo que aún vive en su propia web de pruebas.
+// Para añadir uno nuevo: una línea aquí + su botón en el carril (index.html).
+const MODULOS = [
+  { id: 'notas', nombre: 'Notas', mod: notas },
+  { id: 'finanzas', nombre: 'Finanzas', descripcion: 'Movimientos, cashflow proyectado, cuentas y patrimonio', url: 'https://claude.ai/artifact/GByXAbiq1NgmQFB3yQxvwQ' },
+  { id: 'calendario', nombre: 'Calendario', descripcion: 'En construcción. Pulsa + para abrir una nota.' },
+  { id: 'viajes', nombre: 'Viajes', descripcion: 'En construcción. Pulsa + para abrir una nota.' },
+];
+const MODS = Object.fromEntries(MODULOS.map(m => [m.id, m]));
+const escH = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+function paintModulo(m) {
+  const icon = document.querySelector(`.mod[data-m="${m.id}"] svg`)?.outerHTML.replace(/width="20" height="20"/, 'width="44" height="44"') || '';
+  $('#soonBody').innerHTML = `<div class="soon-ic">${icon}</div><h2>${escH(m.nombre)}</h2><p>${escH(m.descripcion || '')}</p>${m.url ? `<a class="soon-go" href="${escH(m.url)}" target="_blank" rel="noopener">Abrir ${escH(m.nombre)}</a>` : ''}`;
+}
 let current = null;
 
 function go(m, keep) {
@@ -20,7 +28,7 @@ function go(m, keep) {
   const entering = current !== m; current = m;
   document.querySelectorAll('.mod').forEach(b => b.classList.toggle('on', b.dataset.m === m));
   document.querySelectorAll('.view').forEach(v => { v.hidden = v.dataset.view !== (MODS[m].mod ? m : 'soon'); });
-  $('#soonT').textContent = MODS[m].nombre;
+  if (!MODS[m].mod) paintModulo(MODS[m]);
   if (location.hash !== '#' + m) history.replaceState(null, '', '#' + m);
   if (entering && !keep) MODS[m].mod?.enter?.();
 }
