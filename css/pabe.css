@@ -67,7 +67,9 @@ main{flex:1;position:relative;overflow:hidden}
 .nt-tools{position:absolute;left:50%;transform:translateX(-50%);bottom:calc(14px + env(safe-area-inset-bottom));display:flex;align-items:center;gap:2px;padding:4px;border-radius:12px;background:var(--pop);border:1px solid var(--line);box-shadow:var(--shadow)}
 .tl{width:36px;height:36px;display:grid;place-items:center;border-radius:9px;color:var(--mut);cursor:pointer}.tl:hover{color:var(--ink)}.tl.on{background:var(--ink);color:var(--bg)}
 .sepr{width:1px;height:20px;background:var(--line);margin:0 4px}
-.sw{width:24px;height:24px;border-radius:50%;display:grid;place-items:center}.sw b{width:12px;height:12px;border-radius:50%;background:var(--c)}.sw.on{box-shadow:inset 0 0 0 1.5px var(--c)}
+.sw{width:30px;height:30px;border-radius:50%;display:grid;place-items:center}.sw b{width:var(--d,14px);height:var(--d,14px);border-radius:50%;background:var(--c);transition:width .15s,height .15s}.sw.on{box-shadow:inset 0 0 0 1.5px var(--c)}
+.nt-penpop{width:auto;padding:10px}.pp-cols{display:grid;grid-template-columns:repeat(6,32px);gap:6px}.pp-cols button{width:32px;height:32px;border-radius:50%;background:var(--c);border:2px solid transparent;box-shadow:inset 0 0 0 1px rgba(0,0,0,.08)}.pp-cols button.on{border-color:var(--pop);box-shadow:0 0 0 2px var(--c)}
+.pp-sz{display:flex;gap:6px;margin-top:10px;padding-top:10px;border-top:1px solid var(--line)}.pp-sz button{flex:1;height:34px;border-radius:8px;display:grid;place-items:center;color:var(--ink)}.pp-sz button i{display:block;width:28px;border-radius:4px;background:currentColor}.pp-sz button.on{background:var(--hover,rgba(0,0,0,.06))}
 .pop{position:fixed;z-index:30;width:280px;background:var(--pop);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);padding:8px}
 .pop h4{margin:4px 6px 6px;font-size:11px;font-weight:500;color:var(--mut)}
 .trow{display:flex;align-items:center;gap:8px;width:100%;padding:7px 8px;border-radius:7px;font-size:13px;text-align:left}.trow:hover{background:var(--soft)}
@@ -176,7 +178,7 @@ tr:hover .tb-open{display:block}.tb-open:hover{color:var(--ink)}
  .libb .lg{display:none}.libb .sm{display:inline}.libb{padding:0 8px}
  .nt-title{max-width:calc(100vw - 190px)}
  .nt-tabs{bottom:calc(66px + env(safe-area-inset-bottom))}.nt-side{bottom:calc(70px + env(safe-area-inset-bottom))}
- .tl{width:32px;height:32px}.sw{width:20px;height:20px}.sepr{margin:0 2px}.nt-tools{max-width:calc(100vw - 64px);overflow-x:auto}
+ .tl{width:32px;height:32px}.sw{width:28px;height:28px}.sepr{margin:0 2px}.nt-tools{max-width:calc(100vw - 64px);overflow-x:auto}
 }
 
 /* ---------- Asistente ---------- */

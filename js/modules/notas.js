@@ -10,13 +10,16 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 const gid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 const rd = v => Math.round(v * 10) / 10, rd2 = v => Math.round(v * 100) / 100;
 const clone = o => JSON.parse(JSON.stringify(o));
-const PENS = [['ink', 'currentColor'], ['#2F6FEB', '#2F6FEB'], ['#E5484D', '#E5484D'], ['#2B9A66', '#2B9A66']];
-const KINDS = { ball: { w: 2.1 }, fount: { w: 2.6 }, mark: { w: 18 } };
+// Colores del lápiz: 'ink' = negro (blanco en modo oscuro). Se eligen tocando el círculo de color de la barra.
+const PENS = ['ink', '#8B8D98', '#2F6FEB', '#0090FF', '#12A594', '#2B9A66', '#FFC53D', '#F76B15', '#E5484D', '#D6409F', '#8E4EC6', '#AD7F58'];
+const SIZES = [['fino', .7], ['medio', 1], ['grueso', 1.5]];
+const penCss = c => c === 'ink' ? 'var(--ink)' : c;
+const KINDS = { ball: { w: 3 }, fount: { w: 3.6 }, mark: { w: 20 } };
 const L = { get(k) { try { return JSON.parse(localStorage.getItem('pabe:' + k)); } catch (e) { return null; } }, set(k, v) { try { localStorage.setItem('pabe:' + k, JSON.stringify(v)); } catch (e) {} } };
 
 let root, stage, world, ink, itemsEl, caret, toast, table;
 let cur = null, cam = { x: 0, y: 0, k: 1 }, selId = null, hist = [], redo = [];
-let kind = L.get('kind') || 'fount', pen = L.get('pen') || 'ink', eraser = false, shapes = L.get('shapes') !== false;
+let kind = L.get('kind') || 'fount', pen = L.get('pen') || 'ink', penSize = L.get('size') ?? 1, eraser = false, shapes = L.get('shapes') !== false;
 const urlCache = new Map();
 
 const HTML = `
@@ -32,7 +35,7 @@ const HTML = `
  <button class="tl" data-k="ball" title="Bolígrafo" aria-label="Bolígrafo"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" stroke-linecap="round"><path d="M5 19l2.5-.8L18.5 7.2a1.6 1.6 0 0 0-2.2-2.2L5.3 16z"/></svg></button>
  <button class="tl" data-k="fount" title="Pluma" aria-label="Pluma"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"><path d="M12 2.5l5.5 8L12 21l-5.5-10.5z"/><path d="M12 21v-8.2"/><circle cx="12" cy="11.2" r="1.3"/></svg></button>
  <button class="tl" data-k="mark" title="Rotulador" aria-label="Rotulador"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"><path d="M9.5 15.5L5 20h4l2.5-2.5"/><path d="M8 13.5L16.5 4l3.5 3.5L10.5 16z"/></svg></button>
- <span class="sepr"></span>${PENS.map(p => `<button class="sw" data-pen="${p[0]}" style="--c:${p[0] === 'ink' ? 'var(--ink)' : p[1]}" aria-label="Color"><b></b></button>`).join('')}
+ <span class="sepr"></span><button class="sw" id="ntColor" title="Color y grosor" aria-label="Color y grosor"><b></b></button>
  <span class="sepr"></span>
  <button class="tl" id="ntText" title="Escribir con el teclado" aria-label="Escribir con el teclado"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 6V4h14v2M12 4v16M9 20h6"/></svg></button>
  <button class="tl" id="ntInsTable" title="Insertar tabla" aria-label="Insertar tabla"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M3.5 9.5h17M3.5 14.5h17M9.5 9.5v10"/></svg></button>
@@ -47,7 +50,8 @@ const HTML = `
  <button class="tl" id="ntTrash" title="Eliminar selección" aria-label="Eliminar" hidden><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg></button>
 </div>
 <div class="nt-lib" id="ntLibPanel" hidden><div class="scrim"></div><aside class="panel"><div class="lh"><h2>Notas</h2><button class="ico" id="ntLibClose" aria-label="Cerrar">×</button></div><div id="ntTable" class="tb-host"></div></aside></div>
-<div class="pop" id="ntTagPop" hidden></div>`;
+<div class="pop" id="ntTagPop" hidden></div>
+<div class="pop nt-penpop" id="ntPenPop" hidden></div>`;
 
 /* =================== guardado =================== */
 const items = () => cur.doc.tabs[cur.tab];
@@ -110,7 +114,7 @@ function outlineD(p) {
   return `M${f(Lf[0][0])} ${f(Lf[0][1])}` + sm(Lf) + `Q${f(ex + dx * he * 1.3)} ${f(ey + dy * he * 1.3)} ${f(Rr[0][0])} ${f(Rr[0][1])}` + sm(Rr) + `Q${f(p[0] - sx * hs * 1.3)} ${f(p[1] - sy * hs * 1.3)} ${f(Lf[0][0])} ${f(Lf[0][1])}Z`;
 }
 const strokeD = s => s.v === 2 ? outlineD(s.p) : s.sh ? polyD(s.p, s.sh !== 'line') : pathD(s.p);
-const penColor = c => (PENS.find(p => p[0] === c) || [0, c])[1];
+const penColor = c => c === 'ink' ? 'currentColor' : c;
 function mkPath(s) {
   const el = document.createElementNS('http://www.w3.org/2000/svg', 'path'), c = penColor(s.c); el.dataset.id = s.id;
   const a = s.v === 2 ? { fill: c, stroke: 'none' } : { fill: 'none', stroke: c, 'stroke-width': s.w, 'stroke-opacity': s.k === 'mark' ? .32 : 1 };
@@ -200,9 +204,20 @@ function pasteClip(w) {
 function delSel() { if (!selId) return; snap(); cur.doc.tabs[cur.tab] = items().filter(i => i.id !== selId); selId = null; renderItems(); dirty(); }
 
 /* =================== herramientas =================== */
+// Círculo de color: al tocarlo se abre la paleta (colores + grosor). Así la barra ocupa poco, también en el móvil.
+function togglePenPop() {
+  const pop = $('#ntPenPop');
+  if (!pop.hidden) { pop.hidden = true; return; }
+  pop.innerHTML = `<div class="pp-cols">${PENS.map(c => `<button data-pc="${c}" class="${c === pen ? 'on' : ''}" style="--c:${penCss(c)}" aria-label="Color"></button>`).join('')}</div>
+  <div class="pp-sz">${SIZES.map(([n], i) => `<button data-ps="${i}" class="${i === penSize ? 'on' : ''}" title="${n}" aria-label="Grosor ${n}"><i style="height:${2 + i * 2.5}px"></i></button>`).join('')}</div>`;
+  pop.hidden = false;
+  const r = $('#ntColor').getBoundingClientRect(), w = pop.offsetWidth, h = pop.offsetHeight;
+  pop.style.left = Math.max(8, Math.min(innerWidth - w - 8, r.left + r.width / 2 - w / 2)) + 'px';
+  pop.style.top = Math.max(8, r.top - h - 10) + 'px';
+}
 function syncTools() {
   root.querySelectorAll('[data-k]').forEach(b => b.classList.toggle('on', !eraser && b.dataset.k === kind));
-  root.querySelectorAll('.sw').forEach(b => b.classList.toggle('on', b.dataset.pen === pen));
+  const sw = $('#ntColor'); sw.style.setProperty('--c', penCss(pen)); sw.style.setProperty('--d', (8 + penSize * 6) + 'px'); sw.classList.toggle('on', !eraser);
   $('#ntEraser').classList.toggle('on', eraser); $('#ntShapes').classList.toggle('on', shapes);
   $('#ntShapes').title = shapes ? 'Reconocer formas: activado' : 'Reconocer formas: desactivado';
   stage.classList.toggle('erasing', eraser);
@@ -243,7 +258,7 @@ const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y), mid = (a, b) => ({ x: (
 function showCaret(w) { caretW = w; lastW = w; caret.hidden = false; caret.style.left = w.x + 'px'; caret.style.top = (w.y - 12 / cam.k) + 'px'; caret.style.height = (22 / cam.k) + 'px'; caret.style.width = Math.max(1, 1.6 / cam.k) + 'px'; }
 function hideCaret() { if (caret) caret.hidden = true; caretW = null; }
 function isDouble(e, id) { const now = performance.now(), t = lastTap; lastTap = { t: now, x: e.clientX, y: e.clientY, id }; if (t && now - t.t < 380 && Math.hypot(e.clientX - t.x, e.clientY - t.y) < 28 && t.id === id) { lastTap = null; return true; } return false; }
-const baseW = () => KINDS[kind].w / cam.k;
+const baseW = () => KINDS[kind].w * (SIZES[penSize]?.[1] || 1) / cam.k;
 function fw(e, v) { const pr = e.pointerType === 'pen' && e.pressure > 0 ? Math.min(1.3, Math.pow(e.pressure, .75) * 1.3) : Math.max(.3, Math.min(1.1, 1.15 - v * .45)); return baseW() * (.28 + 1.05 * pr); }
 function newStroke(w, e) { const s = { id: gid(), t: 's', k: kind, c: pen, w: rd2(baseW()) }; if (kind === 'fount') { s.v = 2; s.p = [rd(w.x), rd(w.y), rd2(fw(e, 0) * .7)]; } else s.p = [rd(w.x), rd(w.y)]; return s; }
 function cancelAct() { if (act && act.k === 'draw') { cur.doc.tabs[cur.tab] = items().filter(i => i !== act.s); act.el.remove(); hist.pop(); } act = null; }
@@ -442,10 +457,17 @@ export async function mount(el, opts = {}) {
   });
   itemsEl.addEventListener('paste', e => { const el = e.target.closest('.tx'); if (!el) return; const t = e.clipboardData.getData('text/plain'); if (t) { e.preventDefault(); const { before, after } = splitAtCaret(el); setPlain(el, before + t + after, before.length + t.length); } });
 
+  $('#ntPenPop').addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    if (b.dataset.pc) { pen = b.dataset.pc; L.set('pen', pen); $('#ntPenPop').hidden = true; }
+    if (b.dataset.ps) { penSize = +b.dataset.ps; L.set('size', penSize); togglePenPop(); togglePenPop(); }
+    eraser = false; syncTools();
+  });
+  document.addEventListener('pointerdown', e => { const p = $('#ntPenPop'); if (p && !p.hidden && !e.target.closest('#ntPenPop,#ntColor')) p.hidden = true; }, true);
   $('#ntTools').addEventListener('click', e => {
     const b = e.target.closest('button'); if (!b) return;
     if (b.dataset.k) { kind = b.dataset.k; eraser = false; L.set('kind', kind); }
-    if (b.dataset.pen) { pen = b.dataset.pen; eraser = false; L.set('pen', pen); }
+    if (b.id === 'ntColor') { togglePenPop(); return; }
     if (b.id === 'ntEraser') eraser = !eraser;
     if (b.id === 'ntShapes') { shapes = !shapes; L.set('shapes', shapes); flash(shapes ? 'Formas: se convierten en limpias' : 'Formas: se quedan a mano'); }
     if (b.id === 'ntText') { addText(caretW || lastW || centerW()); return; }

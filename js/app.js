@@ -13,8 +13,8 @@ const $ = s => document.querySelector(s);
 // Para añadir uno nuevo: una línea aquí + su botón en el carril (index.html).
 const MODULOS = [
   { id: 'notas', nombre: 'Notas', mod: notas },
-  { id: 'finanzas', nombre: 'Finanzas', descripcion: 'Movimientos, cuentas y patrimonio', mod: finanzas },
   { id: 'calendario', nombre: 'Calendario', descripcion: 'Tu Google Calendar: Personal e I&S Homes', mod: calendario },
+  { id: 'finanzas', nombre: 'Finanzas', descripcion: 'Movimientos, cuentas y patrimonio', mod: finanzas },
   { id: 'viajes', nombre: 'Viajes', descripcion: 'En construcción. Pulsa + para abrir una nota.' },
 ];
 const MODS = Object.fromEntries(MODULOS.map(m => [m.id, m]));
