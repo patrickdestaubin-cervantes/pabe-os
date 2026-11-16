@@ -42,7 +42,7 @@ async function callClaude() {
     const r = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
-      body: JSON.stringify({ model: L.get('model', MODELS[0][0]), max_tokens: 1200, system: systemPrompt(), tools: tools.map(({ _run, ...t }) => t), messages: msgs })
+      body: JSON.stringify({ model: L.get('model', MODELS[0][0]), max_tokens: 1200, system: systemPrompt(), tools: tools.map(t => ({ name: t.name, description: t.description, input_schema: t.input_schema })), messages: msgs })
     });
     if (!r.ok) { const t = await r.text().catch(() => ''); throw Object.assign(new Error('api'), { status: r.status, body: t }); }
     const j = await r.json();
@@ -90,7 +90,7 @@ async function send(text, byVoice) {
     stepEl?.remove(); stepEl = null;
     msgs.pop();
     const s = e.status;
-    bubble('err', s === 401 ? 'La clave de la API no es válida. Revísala en ajustes (⚙).' : s === 429 ? 'Demasiadas peticiones o sin saldo en la cuenta de la API. Prueba en un momento.' : s === 400 && /credit/i.test(e.body || '') ? 'La cuenta de la API no tiene saldo. Añade crédito en console.anthropic.com.' : navigator.onLine === false ? 'Sin conexión.' : 'No pude contestar (' + (s || 'error') + ').');
+    bubble('err', s === 401 ? 'La clave de la API no es válida. Revísala en ajustes (⚙).' : s === 429 ? 'Demasiadas peticiones o sin saldo en la cuenta de la API. Prueba en un momento.' : s === 400 && /credit/i.test(e.body || '') ? 'La cuenta de la API no tiene saldo. Añade crédito en console.anthropic.com.' : navigator.onLine === false ? 'Sin conexión.' : 'No pude contestar (' + (s || 'error') + ')' + (() => { try { const m = JSON.parse(e.body || '{}').error?.message; return m ? ': ' + m : '.'; } catch (_) { return '.'; } })());
   }
   msgs = msgs.slice(-40); while (msgs.length && (msgs[0].role !== 'user' || typeof msgs[0].content !== 'string')) msgs.shift();
   L.set('msgs', msgs); busy = false; $('#agPanel').classList.remove('busy');
