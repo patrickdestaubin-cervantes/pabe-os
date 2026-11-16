@@ -9,13 +9,14 @@ export const gcal = {
   onAuth(fn) { return drive.onAuth(() => fn(this.ready)); },
   hadSession() { return drive.hadSession(); },
   load() { return drive.load(); },
-  signIn(silent) { return drive.signIn(silent).then(() => this.ready); },
+  signIn() { return drive.signIn().then(() => this.ready); },
   signOut() { drive.signOut(); },
 
   async req(path, opt = {}, retry = true) {
+    if (!this.ready) await drive.ensure();
     if (!this.ready) throw Object.assign(new Error('auth'), { code: 'auth' });
     const r = await fetch(API + path, { cache: 'no-store', ...opt, headers: { ...(opt.headers || {}), Authorization: 'Bearer ' + drive.token, ...(opt.body ? { 'Content-Type': 'application/json' } : {}) } });
-    if (r.status === 401) { drive.expire(); throw Object.assign(new Error('auth'), { code: 'auth' }); }
+    if (r.status === 401) { if (retry) { await drive.ensure(true); if (this.ready) return this.req(path, opt, false); } drive.expire(); throw Object.assign(new Error('auth'), { code: 'auth' }); }
     if ((r.status === 429 || r.status >= 500) && retry) { await new Promise(s => setTimeout(s, 800 + Math.random() * 1200)); return this.req(path, opt, false); }
     if (!r.ok) { const body = await r.text().catch(() => ''); throw Object.assign(new Error('calendar ' + r.status), { code: r.status, body }); }
     return r.status === 204 ? null : r.json();

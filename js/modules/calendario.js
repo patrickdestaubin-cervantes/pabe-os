@@ -367,8 +367,7 @@ function go(delta) {
 function setView(v) { view = v; L.set('view', v); render(); if (v !== 'tabla') refresh(); }
 export async function connect() {
   if (!gcal.configured) return flash('Falta el acceso a Google');
-  let ok = gcal.hadSession() ? await gcal.signIn(true) : false;
-  if (!ok) ok = await gcal.signIn(false);
+  const ok = await gcal.signIn();
   if (ok) { cals = []; await refresh(); }
 }
 

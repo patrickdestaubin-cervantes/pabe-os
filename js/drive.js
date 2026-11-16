@@ -1,9 +1,10 @@
-// Acceso al Drive personal: inicio de sesión con Google (GIS) + llamadas REST a Drive v3
+// Acceso al Drive personal: permiso de Google (vía el servidor de PABE) + llamadas REST a Drive v3
 import { CONFIG } from './config.js';
+import { supa } from './supa.js';
 
 const API = 'https://www.googleapis.com/drive/v3';
 const UP = 'https://www.googleapis.com/upload/drive/v3';
-let token = null, exp = 0, client = null, waiters = [], granted = '', loading = null;
+let token = null, exp = 0, granted = '', renewT = null, ensuring = null, lastError = '';
 const listeners = new Set();
 
 try { const t = JSON.parse(localStorage.getItem('pabe:tok') || sessionStorage.getItem('pabe:tok') || 'null'); if (t && t.exp > Date.now() + 60000 && (t.scope || '').includes('drive.appdata')) { token = t.token; exp = t.exp; granted = t.scope; } } catch (e) {}
@@ -23,45 +24,38 @@ export const drive = {
   onAuth(fn) { listeners.add(fn); return () => listeners.delete(fn); },
   hadSession() { try { return localStorage.getItem('pabe:hadSession') === '1'; } catch (e) { return false; } },
 
-  // Carga la librería de Google y prepara el cliente
-  async load() {
-    if (!CONFIG.clientId) return false;
-    if (client) return true;
-    if (loading) return loading;
-    return (loading = this._load());
+  // Permiso de Google: lo entrega el servidor de PABE (Supabase) a partir del permiso permanente que diste al iniciar sesión.
+  // Se renueva solo antes de caducar: nunca más ventanas de «Conectar».
+  load() { return supa.signedIn ? this.ensure() : Promise.resolve(false); },
+  use(t, secs, scope) {
+    token = t; exp = Date.now() + (secs || 3500) * 1000; granted = scope || CONFIG.scope;
+    try { localStorage.setItem('pabe:tok', JSON.stringify({ token, exp, scope: granted })); localStorage.setItem('pabe:hadSession', '1'); } catch (e) {}
+    clearTimeout(renewT); renewT = setTimeout(() => this.ensure(true), Math.max(30000, exp - Date.now() - 5 * 60000));
+    listeners.forEach(f => f(true));
   },
-  async _load() {
-    if (!window.google?.accounts?.oauth2) {
-      await new Promise((ok, ko) => { const s = document.createElement('script'); s.src = 'https://accounts.google.com/gsi/client'; s.async = true; s.onload = ok; s.onerror = ko; document.head.appendChild(s); });
-    }
-    client = google.accounts.oauth2.initTokenClient({
-      client_id: CONFIG.clientId, scope: CONFIG.scope,
-      callback: r => {
-        if (r && r.access_token) {
-          token = r.access_token; exp = Date.now() + (r.expires_in || 3600) * 1000; granted = r.scope || CONFIG.scope;
-          try { localStorage.setItem('pabe:tok', JSON.stringify({ token, exp, scope: granted })); localStorage.setItem('pabe:hadSession', '1'); } catch (e) {}
-          if (!drive.email) drive.req(`${API}/about?fields=user(emailAddress)`).then(x => x.json()).then(j => { try { localStorage.setItem('pabe:email', j.user?.emailAddress || ''); } catch (e) {} }).catch(() => {});
-          listeners.forEach(f => f(true));
-        }
-        waiters.splice(0).forEach(w => w(!!(r && r.access_token)));
-      },
-      error_callback: () => { waiters.splice(0).forEach(w => w(false)); listeners.forEach(f => f(false)); }
-    });
-    return true;
+  ensure(force) {
+    if (!supa.signedIn) return Promise.resolve(false);
+    if (!force && this.ready && !this.needsRenew) return Promise.resolve(true);
+    if (ensuring) return ensuring;
+    return (ensuring = supa.googleToken().then(j => {
+      ensuring = null;
+      if (j.access_token) { this.use(j.access_token, j.expires_in, j.scope); return true; }
+      lastError = j.error || 'google';
+      if (j.error === 'no_refresh_token') { this.missing = true; listeners.forEach(f => f(false)); }
+      else if (!this.ready) { clearTimeout(renewT); renewT = setTimeout(() => this.ensure(true), 60000); }
+      return this.ready;
+    }));
   },
-
-  // Pide (o renueva) el permiso. silent = sin pantalla si ya se dio permiso antes.
-  signIn(silent) {
-    if (!client) return Promise.resolve(false);
-    return new Promise(res => { waiters.push(res); client.requestAccessToken({ prompt: silent ? '' : 'consent', hint: this.email || undefined }); });
-  },
-
-  signOut() { if (token && window.google) google.accounts.oauth2.revoke(token, () => {}); token = null; exp = 0; try { sessionStorage.removeItem('pabe:tok'); localStorage.removeItem('pabe:tok'); localStorage.removeItem('pabe:hadSession'); } catch (e) {} listeners.forEach(f => f(false)); },
+  get lastError() { return lastError; },
+  // Sin sesión (o sin permiso permanente): inicio de sesión con Google, una sola vez por dispositivo
+  signIn() { if (supa.signedIn && !this.missing) return this.ensure(true); supa.login(); return new Promise(() => {}); },
+  signOut() { token = null; exp = 0; try { localStorage.removeItem('pabe:tok'); localStorage.removeItem('pabe:hadSession'); } catch (e) {} supa.logout(); listeners.forEach(f => f(false)); },
 
   async req(url, opt = {}, retry = true) {
+    if (!this.ready) await this.ensure();
     if (!this.ready) throw Object.assign(new Error('auth'), { code: 'auth' });
     const r = await fetch(url, { cache: 'no-store', ...opt, headers: { ...(opt.headers || {}), Authorization: 'Bearer ' + token } });
-    if (r.status === 401 && retry) { token = null; return this.req(url, opt, false); }
+    if (r.status === 401 && retry) { token = null; await this.ensure(true); return this.req(url, opt, false); }
     if (r.status === 429 || r.status >= 500) { if (retry) { await new Promise(s => setTimeout(s, 800 + Math.random() * 1200)); return this.req(url, opt, false); } }
     if (!r.ok) throw Object.assign(new Error('drive ' + r.status), { code: r.status, body: await r.text().catch(() => '') });
     return r;

@@ -1,7 +1,8 @@
 // PABE OS — carcasa: carril de módulos, botón +, estado de Drive
 import { drive } from './drive.js';
 import { CONFIG } from './config.js';
-import { on, sync, syncNow } from './store.js';
+import { on, sync, syncNow, startSync } from './store.js';
+import { supa, realtime } from './supa.js';
 import * as notas from './modules/notas.js';
 import * as finanzas from './modules/finanzas.js';
 import * as calendario from './modules/calendario.js';
@@ -35,24 +36,31 @@ function go(m, keep) {
   if (entering && !keep) MODS[m].mod?.enter?.();
 }
 
-/* ---------- estado de Drive (punto + botón) ---------- */
+/* ---------- estado de la sincronía (punto + botón) ---------- */
+const needLogin = () => !supa.signedIn || drive.missing;
 function paintSync() {
   const b = $('#drv'), s = sync.state;
+  if (needLogin()) { b.className = 'drv auth'; b.textContent = 'Conectar Google'; b.title = 'Inicia sesión con tu cuenta personal de Google (una sola vez en este dispositivo)'; return; }
   b.className = 'drv ' + s;
-  b.textContent = !drive.configured ? 'Solo en este dispositivo' : s === 'auth' || !drive.full ? 'Conectar Google' : s === 'syncing' ? 'Guardando…' : s === 'error' ? (sync.msg || 'Error al guardar') : 'Guardado en Drive';
-  b.title = !drive.configured ? 'Falta configurar el acceso a Google: de momento se guarda solo aquí' : s === 'ok' ? 'Todo guardado en tu Drive personal (06 PABE OS). Toca para sincronizar ahora.' : !drive.full ? 'Un solo inicio de sesión para Drive y Google Calendar' : '';
+  b.textContent = s === 'syncing' ? 'Guardando…' : s === 'error' ? (sync.msg || 'Error al guardar') : s === 'auth' ? 'Conectar Google' : realtime.up ? 'Sincronizado' : 'Guardado';
+  b.title = s === 'ok' ? (realtime.up ? 'Todo guardado y conectado en tiempo real con tus otros dispositivos. Copia en tu Drive (06 PABE OS).' : 'Guardado. Reconectando el tiempo real…') : '';
 }
+function toast(msg) { const t = document.getElementById('toast'); t.textContent = msg; t.classList.add('on'); setTimeout(() => t.classList.remove('on'), 5000); }
 
 // Borrón y cuenta nueva: si cambia CONFIG.epoch, se vacía la copia local de este dispositivo (Drive manda)
 async function resetIfNeeded() {
   let cur = null; try { cur = localStorage.getItem('pabe:epoch'); } catch (e) {}
   if (cur === CONFIG.epoch) return;
   await new Promise(ok => { try { const r = indexedDB.deleteDatabase('pabe-os'); r.onsuccess = r.onerror = r.onblocked = () => ok(); } catch (e) { ok(); } });
-  try { Object.keys(localStorage).filter(k => k.startsWith('pabe:') && !k.startsWith('pabe:ag:') && !k.startsWith('pabe:kind') && !k.startsWith('pabe:pen') && !k.startsWith('pabe:shapes') && k !== 'pabe:sawPen').forEach(k => localStorage.removeItem(k)); localStorage.setItem('pabe:epoch', CONFIG.epoch); } catch (e) {}
+  try { Object.keys(localStorage).filter(k => k.startsWith('pabe:') && k !== 'pabe:sb' && k !== 'pabe:device' && !k.startsWith('pabe:ag:') && !k.startsWith('pabe:kind') && !k.startsWith('pabe:pen') && !k.startsWith('pabe:shapes') && k !== 'pabe:sawPen').forEach(k => localStorage.removeItem(k)); localStorage.setItem('pabe:epoch', CONFIG.epoch); } catch (e) {}
 }
 
 async function boot() {
   await resetIfNeeded();
+  // vuelta del inicio de sesión con Google: la sesión llega en la dirección
+  const login = await supa.handleRedirect();
+  if (login?.error) toast('No se pudo iniciar sesión: ' + login.error);
+  else if (login?.google) drive.use(login.google, login.expires_in, CONFIG.scope);
   $('#rail').addEventListener('click', e => { const b = e.target.closest('.mod'); if (b) go(b.dataset.m); });
   // «+»: en Calendario crea un evento; en el resto, una nota nueva
   $('#plus').onclick = () => { if (current === 'calendario') return calendario.newEvent(); if (current !== 'notas') go('notas'); else notas.enter(); };
@@ -66,25 +74,15 @@ async function boot() {
   agente.register('notas', notas.agentDef); agente.setCurrent(() => current || 'notas'); mountAgent();
   go(location.hash.slice(1) || 'notas');
 
-  on('sync', paintSync); drive.onAuth(ok => { paintSync(); if (ok) { syncNow(); pullSettings(); } });
+  on('sync', paintSync); supa.onAuth(paintSync);
+  drive.onAuth(ok => { paintSync(); if (ok) pullSettings(); });
   paintSync();
   $('#drv').onclick = async () => {
-    if (!drive.configured) { const t = document.getElementById('toast'); t.textContent = 'Aún no está conectado a tu Drive: cada dispositivo guarda solo lo suyo'; t.classList.add('on'); setTimeout(() => t.classList.remove('on'), 4000); return; }
-    // Un solo botón para todo Google (Drive + Calendar). Si falta algún permiso, se pide de una vez.
-    if (!drive.full) { let ok = drive.hadSession() ? await drive.signIn(true) : false; if (!ok || !drive.full) ok = await drive.signIn(false); if (!ok) return; }
+    if (needLogin()) return drive.signIn();   // lleva a Google y vuelve
     syncNow();
   };
-  if (drive.configured) { await drive.load().catch(() => {}); if (drive.ready) { syncNow(); pullSettings(); } paintSync(); }
-
-  // Renovar el permiso de Google solo, sin botón: en el primer toque cuando quedan menos de 10 min o ya caducó.
-  // (Google exige que la ventanita de renovación salga de un toque; con la cuenta ya elegida, se cierra sola.)
-  let renewing = false, lastTry = 0;
-  const autoRenew = () => {
-    if (!drive.configured || !drive.hadSession() || !drive.needsRenew || renewing || Date.now() - lastTry < 60000) return;
-    renewing = true; lastTry = Date.now();
-    drive.signIn(true).then(ok => { renewing = false; if (ok) syncNow(); });
-  };
-  addEventListener('pointerdown', autoRenew, true); addEventListener('keydown', autoRenew, true);
+  startSync();
+  if (supa.signedIn) drive.load().then(ok => { if (ok) pullSettings(); else if (drive.lastError === 'no_secret') toast('Falta el secreto de Google en el servidor de PABE'); paintSync(); });
   if ('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').then(r => r.update()).catch(() => {});
   navigator.serviceWorker?.addEventListener('controllerchange', () => { if (!sessionStorage.getItem('pabe:reloaded')) { sessionStorage.setItem('pabe:reloaded', '1'); location.reload(); } });
 }
