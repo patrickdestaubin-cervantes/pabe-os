@@ -299,3 +299,71 @@ path.mk{mix-blend-mode:multiply}@media (prefers-color-scheme:dark){path.mk{mix-b
 @media (max-width:700px){.cf-chart{padding:8px 6px 2px}.cf tbody th{min-width:130px}}
 
 .tb-mv{display:flex;gap:4px}.tb-mv .tb-pi{flex:1;font-size:13px}.tb-mv .tb-pi:disabled{opacity:.35}
+
+/* ---------- Seleccionar, copiar y pegar en el lienzo ---------- */
+.nt-stage .tx.editing,.nt-stage input,.nt-stage .xl{-webkit-touch-callout:default}
+.nt-stage.lassoing{cursor:crosshair}
+.nt-ink .sel{filter:drop-shadow(0 0 1.5px var(--sel))}
+.nt-lasso{fill:color-mix(in srgb,var(--sel) 7%,transparent);stroke:var(--sel);stroke-dasharray:6 5}
+.nt-selbox{position:absolute;border:1.5px dashed var(--sel);border-radius:8px;pointer-events:none;background:color-mix(in srgb,var(--sel) 4%,transparent)}
+.nt-menu{position:fixed;z-index:32;display:flex;align-items:center;padding:4px;border-radius:11px;background:var(--ink);color:var(--bg);box-shadow:var(--shadow);max-width:calc(100vw - 16px);overflow-x:auto}
+.nt-menu[hidden]{display:none}
+.nt-menu button{height:38px;padding:0 13px;border-radius:8px;font-size:14px;font-weight:500;color:inherit;white-space:nowrap}
+.nt-menu button+button{border-left:1px solid color-mix(in srgb,var(--bg) 18%,transparent);border-radius:0}
+.nt-menu button:hover{background:color-mix(in srgb,var(--bg) 12%,transparent)}
+.nt-menu .dng{color:#ff8b8b}
+.nt-list{position:fixed;z-index:45;min-width:230px;background:var(--pop);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);padding:5px;display:flex;flex-direction:column}
+.nt-list button{text-align:left;height:36px;padding:0 11px;border-radius:7px;font-size:14px;white-space:nowrap}.nt-list button:hover{background:var(--soft)}
+.nt-list .dng{color:var(--neg,#e5484d)}.nt-list hr{border:0;border-top:1px solid var(--line);margin:4px 2px}
+.nt-choose{position:fixed;inset:0;z-index:50;display:grid;place-items:center}.nt-choose[hidden]{display:none}
+.nt-choose .scrim{position:absolute;inset:0;background:rgba(0,0,0,.28)}
+.nt-ch{position:relative;width:min(440px,calc(100vw - 32px));background:var(--pop);border-radius:14px;box-shadow:var(--shadow);padding:16px;display:flex;flex-direction:column;gap:8px}
+.nt-ch h3{margin:0 0 4px;font-size:15px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nt-ch button{text-align:left;padding:11px 13px;border-radius:10px;border:1px solid var(--line);display:flex;flex-direction:column;gap:2px}
+.nt-ch button:hover{border-color:var(--mut)}.nt-ch b{font-weight:600;font-size:15px}.nt-ch small{color:var(--mut);font-size:13px;line-height:1.35}
+.nt-ch .cancel{border:0;align-items:center;color:var(--mut);padding:8px}
+
+/* ---------- Hoja de cálculo (Excel) dentro de una nota ---------- */
+.xl{display:flex;flex-direction:column;background:var(--bg);border:1px solid var(--line);border-radius:10px;box-shadow:0 1px 2px rgba(0,0,0,.04);cursor:auto}
+.xl-h{display:flex;align-items:center;gap:6px;padding:6px 8px;border-bottom:1px solid var(--line);flex:none}
+.xl-grip{cursor:grab;color:var(--mut);font-size:12px;letter-spacing:-2px;padding:6px 4px;touch-action:none}
+.xl-badge{font-size:10px;font-weight:600;color:#fff;background:#1d6f42;border-radius:4px;padding:2px 5px}
+.xl-name{flex:1;min-width:60px;border:0;background:transparent;font-size:16px;font-weight:600;outline:none;color:var(--ink);padding:2px 0}
+.xl-name::placeholder{color:var(--mut);font-weight:500}
+.xl-st{font-size:11px;color:var(--mut);white-space:nowrap}
+.xl-b{height:28px;padding:0 10px;border-radius:7px;font-size:13px;color:var(--mut);border:1px solid var(--line);white-space:nowrap}.xl-b:hover{color:var(--ink)}.xl-b.on{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.xl-body{flex:1;min-height:0;display:flex;flex-direction:column;border-radius:0 0 10px 10px;overflow:hidden}
+.xl-fx{display:flex;align-items:center;border-bottom:1px solid var(--line);flex:none}
+.xl-ref{width:76px;flex:none;font-size:12px;color:var(--mut);text-align:center;border-right:1px solid var(--line);font-variant-numeric:tabular-nums;line-height:32px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.xl-in{flex:1;min-width:0;height:32px;border:0;outline:none;padding:0 10px;font:16px ui-monospace,SFMono-Regular,Menlo,monospace;background:transparent;color:var(--ink)}
+.xl-in:focus{background:var(--soft)}
+.xl-grid{flex:1;min-height:0;overflow:auto;position:relative;touch-action:pan-x pan-y;outline:none;overscroll-behavior:contain;user-select:none;-webkit-user-select:none}
+.xl-sz{position:relative;width:max-content}
+.xl-t{border-collapse:separate;border-spacing:0;table-layout:fixed;font-size:13px}
+.xl-t th,.xl-t td{height:28px;padding:0 6px;border-right:1px solid var(--line);border-bottom:1px solid var(--line);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;box-sizing:border-box}
+.xl-t thead th{position:sticky;top:0;z-index:3;background:var(--soft);color:var(--mut);font-weight:500;font-size:12px;text-align:center;cursor:pointer}
+.xl-t tbody th{position:sticky;left:0;z-index:2;background:var(--soft);color:var(--mut);font-weight:400;font-size:11px;text-align:center;cursor:pointer}
+.xl-t thead th.xl-corner{left:0;z-index:4}
+.xl-t th.on{background:color-mix(in srgb,var(--sel) 16%,var(--soft));color:var(--ink)}
+.xl-t td{cursor:cell;color:var(--ink);position:relative;background:var(--bg)}
+.xl-t td.n{text-align:right;font-variant-numeric:tabular-nums}
+.xl-t td.e{color:var(--neg,#e5484d)}.xl-t td.b{text-align:center}
+.xl-t td.hd{font-weight:600;background:var(--soft);padding-right:28px}
+.xl-t td.in{background:color-mix(in srgb,var(--sel) 10%,var(--bg))}
+.xl-t td.cur{box-shadow:inset 0 0 0 2px var(--sel)}
+.xl-sp td{padding:0!important;border:0!important;height:auto!important;background:none!important}
+.xl-fb{position:absolute;right:3px;top:3px;width:22px;height:22px;border-radius:5px;font-size:11px;color:var(--mut);background:var(--bg);border:1px solid var(--line);display:grid;place-items:center}
+.xl-fb.on{background:var(--sel);color:#fff;border-color:var(--sel)}
+.xl-cr{position:absolute;right:-3px;top:0;bottom:0;width:8px;cursor:col-resize;z-index:5;touch-action:none}.xl-cr:hover{background:color-mix(in srgb,var(--sel) 40%,transparent)}
+.xl-ed{position:absolute;z-index:6;border:0;outline:2px solid var(--sel);padding:0 6px;font:16px Geist,ui-sans-serif,system-ui,sans-serif;background:var(--pop);color:var(--ink);box-sizing:border-box;box-shadow:var(--shadow)}
+.xl-tabs{display:flex;gap:2px;padding:4px 6px;border-top:1px solid var(--line);overflow-x:auto;flex:none}
+.xl-tab{height:26px;padding:0 10px;border-radius:6px;font-size:12px;color:var(--mut);white-space:nowrap}.xl-tab:hover{color:var(--ink)}.xl-tab.on{background:var(--soft);color:var(--ink);font-weight:500}
+.xl-pop{position:fixed;z-index:46;width:260px;max-height:min(460px,75vh);display:flex;flex-direction:column;background:var(--pop);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);padding:6px;font-size:14px}
+.xl-pop>button{text-align:left;height:34px;padding:0 10px;border-radius:7px;flex:none}.xl-pop>button:hover{background:var(--soft)}
+.xl-pop hr{border:0;border-top:1px solid var(--line);margin:4px 0;width:100%}
+.xl-pq{height:34px;border:1px solid var(--line);border-radius:7px;padding:0 10px;font-size:16px;background:var(--soft);outline:none;margin:2px 0 4px;color:var(--ink);flex:none}
+.xl-pall,.xl-plist label{display:flex;align-items:center;gap:8px;padding:5px 8px;border-radius:6px;cursor:pointer}
+.xl-plist{overflow:auto;flex:1;min-height:60px}.xl-plist small{margin-left:auto;color:var(--mut)}.xl-plist label[hidden]{display:none}
+.xl-pbtn{display:flex;gap:6px;justify-content:flex-end;padding-top:6px;border-top:1px solid var(--line);margin-top:4px;flex:none}.xl-pbtn button{height:32px;padding:0 12px;border-radius:7px;background:var(--soft)}.xl-pbtn .pri{background:var(--ink);color:var(--bg)}
+.xl,.tbl{isolation:isolate}
+.nt-ink .sel{outline:none}

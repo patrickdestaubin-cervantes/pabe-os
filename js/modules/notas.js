@@ -1,6 +1,7 @@
 // Módulo 1 — Notas: lienzo infinito (lápiz tipo Nebo, texto, archivos) + biblioteca con la Tabla PABE
 import { collection, tags, files, on, syncNow } from '../store.js';
 import { createTable, pickColor, tagChip, PALETTE } from '../tabla.js';
+import { createSheet, importWorkbook, exportWorkbook, sheetFromRows, sheetTSV, newSheet, fmtVal } from '../hoja.js';
 const TXT = 18; // tamaño de letra estándar de todos los cuadros de texto
 
 const col = collection('notas');
@@ -19,7 +20,7 @@ const KINDS = { brush: { w: 8 }, mark: { w: 22 }, ball: { w: 3 }, fount: { w: 3.
 const L = { get(k) { try { return JSON.parse(localStorage.getItem('pabe:' + k)); } catch (e) { return null; } }, set(k, v) { try { localStorage.setItem('pabe:' + k, JSON.stringify(v)); } catch (e) {} } };
 
 let root, stage, world, ink, itemsEl, caret, toast, table;
-let cur = null, cam = { x: 0, y: 0, k: 1 }, selId = null, hist = [], redo = [];
+let cur = null, cam = { x: 0, y: 0, k: 1 }, sel = new Set(), hist = [], redo = [], lasso = false;
 let kind = ['brush', 'mark'].includes(L.get('kind')) ? L.get('kind') : 'brush', pen = L.get('pen') || 'ink', penSize = L.get('size') ?? 1, eraser = false, shapes = L.get('shapes') !== false;
 const urlCache = new Map();
 
@@ -38,7 +39,9 @@ const HTML = `
  <span class="sepr"></span><button class="sw" id="ntColor" title="Color y grosor" aria-label="Color y grosor"><b></b></button>
  <span class="sepr"></span>
  <button class="tl" id="ntText" title="Escribir con el teclado" aria-label="Escribir con el teclado"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 6V4h14v2M12 4v16M9 20h6"/></svg></button>
+ <button class="tl" id="ntInsSheet" title="Insertar hoja de cálculo (o adjunta un Excel)" aria-label="Insertar hoja de cálculo"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3.5" y="3.5" width="17" height="17" rx="2"/><path d="M3.5 9h17M3.5 14.5h17M9 3.5v17M14.5 3.5v17"/></svg></button>
  <button class="tl" id="ntInsTable" title="Insertar tabla" aria-label="Insertar tabla"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M3.5 9.5h17M3.5 14.5h17M9.5 9.5v10"/></svg></button>
+ <button class="tl" id="ntLasso" title="Seleccionar: rodea texto, dibujos o imágenes para copiar, mover o duplicar" aria-label="Seleccionar"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-dasharray="2.6 2.6"><path d="M12 4c5 0 8.5 2.4 8.5 5.5S17 15 12 15s-8.5-2.4-8.5-5.5S7 4 12 4z"/><path d="M6 13.5c-1.2 1.5-1 4 1.5 5.5" stroke-dasharray="none"/></svg></button>
  <button class="tl" id="ntEraser" title="Borrador (el botón del lápiz también borra)" aria-label="Borrador"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M8 20h12M4.5 14.5l9-9a2 2 0 0 1 3 0l2 2a2 2 0 0 1 0 3l-8 8H8z"/></svg></button>
  <button class="tl" id="ntShapes" aria-label="Reconocer formas"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8.5" cy="8.5" r="4.5"/><rect x="12" y="12" width="8" height="8" rx="1"/></svg></button>
  <span class="sepr"></span>
@@ -51,7 +54,9 @@ const HTML = `
 </div>
 <div class="nt-lib" id="ntLibPanel" hidden><div class="scrim"></div><aside class="panel"><div class="lh"><h2>Notas</h2><button class="ico" id="ntLibClose" aria-label="Cerrar">×</button></div><div id="ntTable" class="tb-host"></div></aside></div>
 <div class="pop" id="ntTagPop" hidden></div>
-<div class="pop nt-penpop" id="ntPenPop" hidden></div>`;
+<div class="pop nt-penpop" id="ntPenPop" hidden></div>
+<div class="nt-menu" id="ntMenu" role="menu" hidden></div>
+<div class="nt-choose" id="ntChoose" hidden></div>`;
 
 /* =================== guardado =================== */
 const items = () => cur.doc.tabs[cur.tab];
@@ -70,30 +75,30 @@ function saveNow() {
   autoTitle();
   if (!cur.saved && isBlank()) return; cur.saved = true;
   const m = cur.meta, all = m.tabs.flatMap(t => (cur.doc.tabs[t.id] || []).map(i => ({ ...i, tab: t.id })));
-  m.text = all.filter(i => (i.t === 'x' && i.s.trim()) || i.t === 'tb').map(i => i.t === 'tb' ? [(i.n || 'Tabla'), ...(i.rows || []).map(r => r.title)].join(', ') : i.s.trim()).join(' · ').slice(0, 3000);
-  m.files = all.filter(i => i.f).map(i => ({ ...i.f, tab: i.tab, item: i.id }));
+  m.text = all.filter(i => (i.t === 'x' && i.s.trim()) || i.t === 'tb' || i.t === 'xl').map(i => i.t === 'tb' ? [(i.n || 'Tabla'), ...(i.rows || []).map(r => r.title)].join(', ') : i.t === 'xl' ? xlPreview(i) : i.s.trim()).join(' · ').slice(0, 3000);
+  m.files = all.flatMap(i => [i.f, i.fx].filter(Boolean).map(f => ({ ...f, tab: i.tab, item: i.id })));
   m.ink = all.some(i => i.t === 's');
   col.put(clone(m), clone(cur.doc));
 }
 
 /* =================== abrir / nueva =================== */
 export function newNote() {
-  saveNow(); const t = gid();
+  flushXlsx(); saveNow(); const t = gid();
   cur = { meta: { id: gid(), title: '', tags: [], tabs: [{ id: t, name: 'Hoja 1' }], created: Date.now(), updated: Date.now(), text: '', files: [], valores: {} }, doc: { tabs: { [t]: [] } }, saved: false, tab: t };
-  hist = []; redo = []; selId = null; hideCaret(); resetCam(); renderNote();
+  hist = []; redo = []; sel = new Set(); hideMenu(); hideCaret(); resetCam(); renderNote();
 }
 async function openNote(id, focus) {
   const m = col.index.get(id); if (!m) return;
   if (!cur || cur.meta.id !== id) {
-    saveNow();
+    flushXlsx(); saveNow();
     const doc = (await col.load(id)) || { tabs: {} };
     m.tabs.forEach(t => { doc.tabs[t.id] = doc.tabs[t.id] || []; });
     cur = { meta: clone(m), doc: clone(doc), saved: true, tab: m.tabs[0].id };
-    hist = []; redo = []; selId = null; hideCaret(); resetCam();
+    hist = []; redo = []; sel = new Set(); hideMenu(); hideCaret(); resetCam();
   }
   if (focus?.tab) cur.tab = focus.tab;
   renderNote(); closeLib();
-  if (focus?.item) { const it = items().find(i => i.id === focus.item); if (it) { cam.k = 1; cam.x = stage.clientWidth / 2 - it.x - (it.w || 130) / 2; cam.y = stage.clientHeight / 2 - it.y - 40; applyCam(); selId = it.id; markSel(); } }
+  if (focus?.item) { const it = items().find(i => i.id === focus.item); if (it) { cam.k = 1; cam.x = stage.clientWidth / 2 - it.x - (it.w || 130) / 2; cam.y = stage.clientHeight / 2 - it.y - 40; applyCam(); sel = new Set([it.id]); markSel(); } }
 }
 
 /* =================== pintar nota =================== */
@@ -136,9 +141,10 @@ function itemHtml(i) {
   const pos = `left:${i.x}px;top:${i.y}px`;
   if (i.t === 'x') return `<div class="it tx" data-id="${i.id}" style="${pos};font-size:${TXT}px" spellcheck="false">${esc(i.s)}</div>`;
   if (i.t === 'tb') return `<div class="it tbl" data-id="${i.id}" style="${pos};width:${i.w || 680}px"><div class="tbl-h"><span>⋮⋮</span><input class="tbl-name" value="${esc(i.n || '')}" placeholder="Tabla sin título" aria-label="Nombre de la tabla"></div><div class="tbl-body tb-host"></div><span class="rz"></span></div>`;
+  if (i.t === 'xl') return `<div class="it xl" data-id="${i.id}" style="${pos};width:${i.w || 760}px;height:${i.h || 400}px"><div class="xl-h"><span class="xl-grip" title="Arrastra para mover">⋮⋮</span><span class="xl-badge">XLS</span><input class="xl-name" value="${esc(i.n || '')}" placeholder="Hoja de cálculo" aria-label="Nombre de la hoja de cálculo"><span class="xl-st"></span><button class="xl-b" data-xa="filter" title="Filtrar y ordenar por columnas (la fila seleccionada es la cabecera)">Filtro</button><button class="xl-b" data-xa="more" aria-label="Más opciones" title="Filas, columnas, hojas, descargar">⋯</button></div><div class="xl-body"></div><span class="rz"></span></div>`;
   if (i.t === 'i') return `<div class="it im" data-id="${i.id}" style="${pos};width:${i.w}px"><img data-fid="${esc(i.f.id)}" alt="${esc(i.f.n)}" draggable="false"><span class="rz"></span></div>`;
   const ext = (i.f.n.split('.').pop() || '').slice(0, 4);
-  return `<div class="it fi" data-id="${i.id}" style="${pos}"><span class="fic">${esc(ext)}</span><span class="fn">${esc(i.f.n)}<small>${i.f.sz ? size(i.f.sz) : ''}</small></span><button class="fa" data-fopen="${esc(i.f.id)}">Abrir</button><button class="fa" data-fdrive="${esc(i.f.id)}">Drive</button></div>`;
+  return `<div class="it fi" data-id="${i.id}" style="${pos}"><span class="fic">${esc(ext)}</span><span class="fn">${esc(i.f.n)}<small>${i.f.sz ? size(i.f.sz) : ''}</small></span>${SHEET_RE.test(i.f.n) ? `<button class="fa" data-fembed="1">Abrir aquí</button>` : ''}<button class="fa" data-fopen="${esc(i.f.id)}">Abrir</button><button class="fa" data-fdrive="${esc(i.f.id)}">Drive</button></div>`;
 }
 function renderItems() {
   const a = items();
@@ -146,6 +152,7 @@ function renderItems() {
   itemsEl.innerHTML = a.filter(i => i.t !== 's').map(itemHtml).join('');
   itemsEl.querySelectorAll('img[data-fid]').forEach(async img => { const u = await blobUrl(img.dataset.fid); if (u) img.src = u; });
   itemsEl.querySelectorAll('.tbl').forEach(el => mountNoteTable(el, a.find(i => i.id === el.dataset.id)));
+  sheetApis.clear(); itemsEl.querySelectorAll('.xl').forEach(el => mountSheet(el, a.find(i => i.id === el.dataset.id)));
   markSel();
 }
 
@@ -178,14 +185,17 @@ function addTable(w) {
 }
 async function blobUrl(id) { if (urlCache.has(id)) return urlCache.get(id); const u = await files.url(id).catch(() => null); if (u) urlCache.set(id, u); return u; }
 function markSel() {
-  itemsEl.querySelectorAll('.sel').forEach(e => e.classList.remove('sel'));
-  const el = selId && itemsEl.querySelector(`[data-id="${selId}"]`); if (el) el.classList.add('sel'); else selId = null;
-  $('#ntTrash').hidden = !selId; $('#ntCopy').hidden = !selId; $('#ntCut').hidden = !selId; $('#ntPaste').hidden = !!selId;
+  const ids = new Set(items().map(i => i.id)); for (const id of [...sel]) if (!ids.has(id)) sel.delete(id);
+  itemsEl.querySelectorAll('.sel').forEach(e => e.classList.remove('sel')); ink.querySelectorAll('.sel').forEach(e => e.classList.remove('sel'));
+  for (const id of sel) { itemsEl.querySelector(`[data-id="${id}"]`)?.classList.add('sel'); ink.querySelector(`[data-id="${id}"]`)?.classList.add('sel'); }
+  const has = sel.size > 0; $('#ntTrash').hidden = !has; $('#ntCopy').hidden = !has; $('#ntCut').hidden = !has; $('#ntPaste').hidden = has;
+  drawSelBox(); if (!has && menuFor === 'sel') hideMenu(); else placeMenu();
 }
 function applyCam() {
   world.style.transform = `translate(${cam.x}px,${cam.y}px) scale(${cam.k})`;
   const g = 24 * cam.k; stage.style.backgroundSize = `${g}px ${g}px`; stage.style.backgroundPosition = `${cam.x}px ${cam.y}px`;
   stage.style.backgroundImage = cam.k < .35 ? 'none' : ''; $('#ntZoom').textContent = Math.round(cam.k * 100) + '%';
+  placeMenu();
 }
 function resetCam() { cam = { x: 0, y: 0, k: 1 }; applyCam(); }
 function zoomAt(cx, cy, f) { const r = stage.getBoundingClientRect(), k = Math.min(6, Math.max(.1, cam.k * f)), wx = (cx - r.left - cam.x) / cam.k, wy = (cy - r.top - cam.y) / cam.k; cam.k = k; cam.x = cx - r.left - wx * k; cam.y = cy - r.top - wy * k; applyCam(); }
@@ -194,25 +204,263 @@ function centerW() { return { x: (stage.clientWidth / 2 - cam.x) / cam.k - 120, 
 
 /* =================== historial =================== */
 function snap() { hist.push(JSON.stringify(items())); if (hist.length > 60) hist.shift(); redo = []; }
-function undo() { if (!hist.length) return; redo.push(JSON.stringify(items())); cur.doc.tabs[cur.tab] = JSON.parse(hist.pop()); selId = null; renderItems(); dirty(); }
-function redoF() { if (!redo.length) return; hist.push(JSON.stringify(items())); cur.doc.tabs[cur.tab] = JSON.parse(redo.pop()); renderItems(); dirty(); }
+// Las hojas de cálculo tienen su propio deshacer (Ctrl+Z dentro de la hoja): el del lienzo no les quita lo escrito
+function keepSheets(next) { const now = new Map(items().filter(i => i.t === 'xl').map(i => [i.id, i])); next.forEach(i => { const n = now.get(i.id); if (i.t === 'xl' && n) Object.assign(i, { sheets: n.sheets, s: n.s, n: n.n, fx: n.fx }); }); return next; }
+function undo() { if (!hist.length) return; redo.push(JSON.stringify(items())); cur.doc.tabs[cur.tab] = keepSheets(JSON.parse(hist.pop())); sel = new Set(); renderItems(); dirty(); }
+function redoF() { if (!redo.length) return; hist.push(JSON.stringify(items())); cur.doc.tabs[cur.tab] = keepSheets(JSON.parse(redo.pop())); renderItems(); dirty(); }
+/* =================== selección, menú, copiar y pegar =================== */
+// Varios elementos a la vez (texto, trazos, imágenes, tablas, hojas): con el lazo, «Seleccionar todo» o tocando uno.
+const selItems = () => items().filter(i => sel.has(i.id));
+function bboxOf(i) {
+  if (i.t === 's') {
+    const st = i.v === 2 ? 3 : 2, p = i.p; let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity;
+    for (let k = 0; k < p.length; k += st) { const h = (st === 3 ? p[k + 2] : i.w) / 2; x1 = Math.min(x1, p[k] - h); y1 = Math.min(y1, p[k + 1] - h); x2 = Math.max(x2, p[k] + h); y2 = Math.max(y2, p[k + 1] + h); }
+    return { x1, y1, x2, y2 };
+  }
+  const el = itemsEl.querySelector(`[data-id="${i.id}"]`), w = el ? el.offsetWidth : (i.w || 200), h = el ? el.offsetHeight : (i.h || 40);
+  return { x1: i.x, y1: i.y, x2: i.x + w, y2: i.y + h };
+}
+const unionBox = bs => bs.reduce((a, b) => ({ x1: Math.min(a.x1, b.x1), y1: Math.min(a.y1, b.y1), x2: Math.max(a.x2, b.x2), y2: Math.max(a.y2, b.y2) }));
+function originOf(list) { let x = Infinity, y = Infinity; list.forEach(i => { if (i.t === 's') { const st = i.v === 2 ? 3 : 2; for (let k = 0; k < i.p.length; k += st) { x = Math.min(x, i.p[k]); y = Math.min(y, i.p[k + 1]); } } else { x = Math.min(x, i.x); y = Math.min(y, i.y); } }); return { x, y }; }
+function shiftItem(i, dx, dy) { if (i.t === 's') { const st = i.v === 2 ? 3 : 2; for (let k = 0; k < i.p.length; k += st) { i.p[k] = rd(i.p[k] + dx); i.p[k + 1] = rd(i.p[k + 1] + dy); } } else { i.x = rd(i.x + dx); i.y = rd(i.y + dy); } }
+// recuadro de la selección: cuando hay trazos o varios elementos
+const boxOn = () => sel.size > 1 || selItems().some(i => i.t === 's');
+function drawSelBox() {
+  const b = $('.nt-selbox', root); if (!b) return;
+  if (!sel.size || !boxOn()) { b.hidden = true; return; }
+  const bb = unionBox(selItems().map(bboxOf)), pad = 6 / cam.k;
+  b.hidden = false; b.style.transform = ''; Object.assign(b.style, { left: bb.x1 - pad + 'px', top: bb.y1 - pad + 'px', width: bb.x2 - bb.x1 + 2 * pad + 'px', height: bb.y2 - bb.y1 + 2 * pad + 'px', borderWidth: 1.5 / cam.k + 'px' });
+}
+function inSelBox(w) { if (!sel.size || !boxOn()) return false; const bb = unionBox(selItems().map(bboxOf)), pad = 14 / cam.k; return w.x >= bb.x1 - pad && w.x <= bb.x2 + pad && w.y >= bb.y1 - pad && w.y <= bb.y2 + pad; }
+function selectAll() { sel = new Set(items().map(i => i.id)); markSel(); if (sel.size) showMenu('sel'); else flash('La hoja está vacía'); }
+function inPoly(x, y, P) { let c = false; for (let i = 0, j = P.length - 2; i < P.length; j = i, i += 2) { const xi = P[i], yi = P[i + 1], xj = P[j], yj = P[j + 1]; if (((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) c = !c; } return c; }
+function lassoSelect(P) {
+  const found = items().filter(i => {
+    if (i.t === 's') { const st = i.v === 2 ? 3 : 2, n = i.p.length / st; let k = 0; for (let j = 0; j < i.p.length; j += st) if (inPoly(i.p[j], i.p[j + 1], P)) k++; return k >= Math.max(1, n * .5); }
+    const b = bboxOf(i); return inPoly((b.x1 + b.x2) / 2, (b.y1 + b.y2) / 2, P);
+  });
+  sel = new Set(found.map(i => i.id)); lasso = false; syncTools(); markSel();
+  if (found.length) showMenu('sel'); else flash('No hay nada dentro del lazo');
+}
+
+/* ---------- menú flotante ---------- */
+let menuFor = null, menuPt = null, menuW = null;
+function showMenu(kind, pt) {
+  const m = $('#ntMenu'); menuFor = kind; menuPt = pt || null; menuW = pt ? toW({ clientX: pt.x, clientY: pt.y }) : null;
+  const b = [];
+  if (kind === 'sel') {
+    const list = selItems(), one = list.length === 1 ? list[0] : null;
+    if (!list.length) return hideMenu();
+    if (one?.t === 'x') b.push(['edit', 'Editar']);
+    b.push(['copy', 'Copiar'], ['cut', 'Cortar'], ['dup', 'Duplicar']);
+    if (one?.t === 'f' && SHEET_RE.test(one.f.n)) b.push(['embed', 'Abrir como hoja']);
+    if (one?.t === 'xl') b.push(['xlsx', 'Descargar Excel']);
+    if (list.length < items().length) b.push(['all', 'Todo']);
+    b.push(['del', 'Eliminar']);
+  } else b.push(['paste', 'Pegar'], ['pastesheet', 'Pegar como hoja'], ['lasso', 'Seleccionar'], ['all', 'Seleccionar todo']);
+  m.innerHTML = b.map(([k, t]) => `<button data-mn="${k}" role="menuitem"${k === 'del' ? ' class="dng"' : ''}>${t}</button>`).join('');
+  m.hidden = false; placeMenu();
+}
+function hideMenu() { const m = root && $('#ntMenu'); if (m) m.hidden = true; menuFor = null; }
+function placeMenu() {
+  const m = root && $('#ntMenu'); if (!m || m.hidden) return;
+  const r = stage.getBoundingClientRect(), W = m.offsetWidth, H = m.offsetHeight; let x, y;
+  if (menuFor === 'sel') {
+    const list = selItems(); if (!list.length) return hideMenu();
+    const bb = unionBox(list.map(bboxOf)), top = r.top + cam.y + bb.y1 * cam.k - 12, bot = r.top + cam.y + bb.y2 * cam.k + 12;
+    x = r.left + cam.x + (bb.x1 + bb.x2) / 2 * cam.k - W / 2;
+    y = top - H > r.top + 64 ? top - H : bot + H < r.bottom - 70 ? bot : Math.max(r.top + 64, Math.min(r.bottom - H - 70, top - H));
+  } else { x = menuPt.x - W / 2; y = menuPt.y - H - 14; if (y < r.top + 56) y = menuPt.y + 18; }
+  m.style.left = Math.max(8, Math.min(innerWidth - W - 8, x)) + 'px'; m.style.top = Math.max(8, Math.min(innerHeight - H - 8, y)) + 'px';
+}
+function menuAction(k) {
+  const w = menuW; hideMenu();
+  if (k === 'edit') { const it = selItems()[0], el = it && itemsEl.querySelector(`[data-id="${it.id}"]`); if (el) edit(el); }
+  if (k === 'copy') copySel(false);
+  if (k === 'cut') copySel(true);
+  if (k === 'dup') dupSel();
+  if (k === 'del') delSel();
+  if (k === 'all') selectAll();
+  if (k === 'embed') embedFileItem(selItems()[0]);
+  if (k === 'xlsx') downloadXlsx(selItems()[0]);
+  if (k === 'paste') pasteSystem(w || caretW || lastW || centerW());
+  if (k === 'pastesheet') pasteSystem(w || caretW || lastW || centerW(), 'sheet');
+  if (k === 'lasso') { lasso = true; eraser = false; sel = new Set(); markSel(); syncTools(); flash('Rodea con el dedo o el lápiz lo que quieras seleccionar'); }
+}
+
+/* ---------- copiar: dentro de PABE y al portapapeles del sistema (texto, tabla e imagen) ---------- */
 let clip = null;
+const tbTSV = i => { const props = i.props || [], head = [i.prefs?.names?.title || 'Nombre', ...props.map(p => p.nombre)]; return [head, ...(i.rows || []).map(r => [r.title || '', ...props.map(p => { const v = r.valores?.[p.id]; return Array.isArray(v) ? v.map(id => tags.get(p.sistema, id)?.nombre || id).join(', ') : v ?? ''; })])].map(r => r.join('\t')).join('\n'); };
+const itemTSV = i => i.t === 'tb' ? tbTSV(i) : i.t === 'xl' ? sheetTSV(i.sheets[i.s || 0]) : '';
+const tsvHtml = t => '<table>' + t.split('\n').map(l => '<tr>' + l.split('\t').map(c => `<td>${esc(c)}</td>`).join('') + '</tr>').join('') + '</table>';
+function clipText(list) {
+  const ord = [...list].sort((a, b) => bboxOf(a).y1 - bboxOf(b).y1), txt = [], html = [];
+  ord.forEach(i => { if (i.t === 'x') { txt.push(i.s); html.push('<p>' + esc(i.s).replace(/\n/g, '<br>') + '</p>'); } else if (i.t === 'tb' || i.t === 'xl') { const t = itemTSV(i); txt.push(t); html.push(tsvHtml(t)); } else if (i.f) txt.push(i.f.n); });
+  return { txt: txt.join('\n\n'), html: html.join('') };
+}
 function copySel(cut) {
-  const it = items().find(i => i.id === selId); if (!it) return;
-  clip = clone(it);
-  const txt = it.t === 'x' ? it.s : it.t === 'tb' ? [(it.n || 'Tabla'), ...(it.rows || []).map(r => r.title)].join('\n') : (it.f?.n || '');
-  clip._txt = txt; try { navigator.clipboard?.writeText(txt).catch(() => {}); } catch (_) {}
+  const list = selItems(); if (!list.length) return;
+  clip = { items: clone(list) };
+  const { txt, html } = clipText(list); clip._txt = txt;
+  const visual = list.some(i => i.t === 's' || i.t === 'i'), cb = navigator.clipboard;
+  try {
+    if (visual && window.ClipboardItem && cb?.write) {
+      const png = renderPng(list); clip._dim = png.dim;
+      const data = { 'image/png': png };
+      if (txt) { data['text/plain'] = new Blob([txt], { type: 'text/plain' }); data['text/html'] = new Blob([html], { type: 'text/html' }); }
+      cb.write([new ClipboardItem(data)]).catch(() => { if (txt) cb.writeText(txt).catch(() => {}); });
+    } else if (txt && window.ClipboardItem && cb?.write) cb.write([new ClipboardItem({ 'text/plain': new Blob([txt], { type: 'text/plain' }), 'text/html': new Blob([html || esc(txt)], { type: 'text/html' }) })]).catch(() => cb.writeText(txt).catch(() => {}));
+    else if (txt) cb?.writeText(txt).catch(() => {});
+  } catch (_) {}
   if (cut) delSel();
-  flash(cut ? 'Cortado' : 'Copiado'); markSel();
+  flash(cut ? 'Cortado' : visual ? 'Copiado (también como imagen, para pegarlo en otras apps)' : 'Copiado');
 }
-function pasteClip(w) {
-  if (!clip) return false; snap();
-  const n = { ...clone(clip), id: gid() }; delete n._txt;
-  const p = w || caretW || centerW(); n.x = rd(p.x); n.y = rd(p.y);
-  if (n.rows) n.rows = n.rows.map(r => ({ ...r, id: gid() }));
-  items().push(n); selId = n.id; renderItems(); dirty(); return true;
+// Dibuja la selección en una imagen PNG (fondo blanco) para pegarla en WhatsApp, correo, Word, Notas…
+function renderPng(list) {
+  const prep = list.map(i => { const el = itemsEl.querySelector(`[data-id="${i.id}"]`); return { i, b: bboxOf(i), el, img: el?.querySelector('img'), tsv: (i.t === 'tb' || i.t === 'xl') ? itemTSV(i) : '' }; });
+  const bb = unionBox(prep.map(p => p.b)), pad = 20, W = bb.x2 - bb.x1 + 2 * pad, H = bb.y2 - bb.y1 + 2 * pad, k = Math.min(2, 4000 / Math.max(W, H));
+  const cw0 = Math.ceil(W * k), ch0 = Math.ceil(H * k);
+  const pr = (async () => {
+    const cv = document.createElement('canvas'); cv.width = cw0; cv.height = ch0;
+    const g = cv.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, cv.width, cv.height); g.scale(k, k); g.translate(pad - bb.x1, pad - bb.y1);
+    g.textBaseline = 'top'; const INK = '#17171a', FONT = 'Geist, ui-sans-serif, system-ui, sans-serif';
+    const wrap = (text, x, y, maxW, lh) => { for (const para of String(text).split('\n')) { let line = ''; for (const word of para.split(/(\s+)/)) { if (line && g.measureText(line + word).width > maxW) { g.fillText(line, x, y); y += lh; line = word.trimStart(); } else line += word; } g.fillText(line, x, y); y += lh; } };
+    for (const { i, b, img, tsv } of prep) {
+      if (i.t === 's') {
+        const c = i.c === 'ink' ? INK : i.c, path = new Path2D(strokeD(i));
+        if (i.v === 2) { g.fillStyle = c; g.fill(path); }
+        else { g.globalAlpha = i.k === 'mark' ? .4 : 1; g.strokeStyle = i.k === 'mark' && i.c === 'ink' ? '#FFC53D' : c; g.lineWidth = i.w; g.lineCap = 'round'; g.lineJoin = 'round'; g.stroke(path); g.globalAlpha = 1; }
+      } else if (i.t === 'i' && img) { try { g.drawImage(img, b.x1, b.y1, b.x2 - b.x1, b.y2 - b.y1); } catch (_) {} }
+      else if (i.t === 'x') { g.fillStyle = INK; g.font = `${TXT}px ${FONT}`; wrap(i.s, b.x1 + 4, b.y1 + 2 + TXT * .175, Math.max(40, b.x2 - b.x1 - 8), TXT * 1.35); }
+      else {
+        g.strokeStyle = '#d9d9de'; g.lineWidth = 1; g.strokeRect(b.x1, b.y1, b.x2 - b.x1, b.y2 - b.y1); g.fillStyle = INK; g.font = `13px ${FONT}`;
+        const rows = (tsv || i.f?.n || '').split('\n').slice(0, Math.floor((b.y2 - b.y1 - 16) / 22)), cols = Math.max(1, ...rows.map(r => r.split('\t').length)), cw = (b.x2 - b.x1 - 16) / cols;
+        rows.forEach((r, ri) => r.split('\t').forEach((c, ci) => { g.save(); g.beginPath(); g.rect(b.x1 + 8 + ci * cw, b.y1 + 8 + ri * 22, cw - 6, 22); g.clip(); g.fillText(c, b.x1 + 8 + ci * cw, b.y1 + 12 + ri * 22); g.restore(); }));
+      }
+    }
+    return await new Promise(res => cv.toBlob(res, 'image/png'));
+  })();
+  pr.dim = cw0 + 'x' + ch0; return pr;
 }
-function delSel() { if (!selId) return; snap(); cur.doc.tabs[cur.tab] = items().filter(i => i.id !== selId); selId = null; renderItems(); dirty(); }
+function pasteClip(w, off) {
+  if (!clip?.items?.length) return false; snap();
+  const list = clone(clip.items), o = originOf(list), dx = w ? w.x - o.x : (off?.dx ?? 24 / cam.k), dy = w ? w.y - o.y : (off?.dy ?? 24 / cam.k), ids = [];
+  list.forEach(n => { n.id = gid(); if (n.rows) n.rows = n.rows.map(r => ({ ...r, id: gid() })); if (n.t === 'xl') delete n.fx; shiftItem(n, dx, dy); items().push(n); ids.push(n.id); });
+  sel = new Set(ids); renderItems(); dirty(); showMenu('sel'); return true;
+}
+function dupSel() { const keep = clip; clip = { items: clone(selItems()) }; pasteClip(null, { dx: 30 / cam.k, dy: 30 / cam.k }); clip = keep; }
+// ¿Lo que hay en el portapapeles es lo último que se copió en PABE? Entonces se pega tal cual (trazos, tablas, hojas…)
+// (las imágenes las vuelve a codificar el sistema: se comparan por tamaño en píxeles)
+async function isOwnClip(fs, text) {
+  if (!clip?.items?.length) return false;
+  if (!fs.length) return !text || text === clip._txt;
+  if (fs.length === 1 && clip._dim && /^image\//.test(fs[0].type) && (!text || text === clip._txt)) { try { const b = await createImageBitmap(fs[0]); return b.width + 'x' + b.height === clip._dim; } catch (_) {} }
+  return false;
+}
+function delSel() { if (!sel.size) return; snap(); cur.doc.tabs[cur.tab] = items().filter(i => !sel.has(i.id)); sel = new Set(); renderItems(); dirty(); }
+
+/* =================== hojas de cálculo (Excel) dentro de la nota =================== */
+const SHEET_RE = /\.(xlsx|xlsm|xlsb|xls|ods|numbers|csv|tsv)$/i;
+const sheetApis = new Map(), xlT = new Map();
+function xlPreview(i) {
+  const s = i.sheets?.[0]; if (!s) return i.n || 'Hoja de cálculo';
+  const cells = Object.entries(s.cells).filter(([a]) => /^[A-Z]{1,2}[1-3]$/.test(a)).slice(0, 12).map(([, c]) => fmtVal(c.f != null ? c.cv : c.v, c.z)).filter(Boolean);
+  return [i.n || 'Hoja de cálculo', ...cells].join(', ');
+}
+function mountSheet(el, it) {
+  if (!it) return;
+  const api = createSheet(el.querySelector('.xl-body'), it, { onChange: what => { dirty(); if (what !== 'view') queueXlsx(it.id); }, flash });
+  sheetApis.set(it.id, api);
+  const nm = el.querySelector('.xl-name'); nm.oninput = () => { it.n = nm.value; dirty(); };
+  const fb = el.querySelector('[data-xa="filter"]'); fb.classList.toggle('on', api.filtering);
+  el.querySelector('.xl-h').addEventListener('click', e => { const b = e.target.closest('[data-xa]'); if (!b) return; if (b.dataset.xa === 'filter') { fb.classList.toggle('on', api.toggleFilter()); flash(api.filtering ? 'Filtro activado: toca ▾ en la cabecera' : 'Filtro quitado'); } else sheetMenu(it, api, b); });
+  setXlStatus(it.id, it.fx ? 'En Drive' : '');
+}
+function setXlStatus(id, t) { const s = itemsEl?.querySelector(`[data-id="${id}"] .xl-st`); if (s) s.textContent = t || ''; }
+function addSheetItem(w, data) {
+  hideCaret(); snap();
+  // que quepa en la pantalla (iPad en vertical, móvil)
+  const vw = stage.clientWidth / cam.k, left = -cam.x / cam.k, W = Math.round(Math.min(760, vw - 40 / cam.k));
+  const x = Math.max(left + 20 / cam.k, Math.min(w.x, left + vw - W - 20 / cam.k));
+  const t = { id: gid(), t: 'xl', x: rd(x), y: rd(w.y), w: W, h: 400, s: 0, n: '', ...data };
+  items().push(t); renderItems(); dirty(); sel = new Set([t.id]); markSel();
+  setTimeout(() => sheetApis.get(t.id)?.focus(), 30); return t;
+}
+const findItem = id => cur && cur.meta.tabs.flatMap(t => cur.doc.tabs[t.id] || []).find(i => i.id === id);
+// Copia actualizada en Drive: «<nombre> · PABE.xlsx» en 06 PABE OS / Notas (el Excel original no se toca)
+function queueXlsx(id) { clearTimeout(xlT.get(id)); setXlStatus(id, 'Cambios sin subir…'); xlT.set(id, setTimeout(() => saveXlsx(id), 4000)); }
+function flushXlsx() { for (const [id, t] of xlT) { clearTimeout(t); saveXlsx(id); } }
+async function saveXlsx(id) {
+  xlT.delete(id); const it = findItem(id); if (!it) return;
+  try {
+    const blob = await exportWorkbook(it.sheets);
+    if (it.fx) await files.replace(it.fx, blob);
+    else { const base = (it.n || it.f?.n?.replace(/\.[^.]+$/, '') || 'Hoja de cálculo').replace(/[\\/:*?"<>|]/g, ' ').trim(); it.fx = await files.add('notas', new File([blob], base + ' · PABE.xlsx', { type: blob.type })); saveNow(); }
+    setXlStatus(id, 'Guardado en Drive');
+  } catch (e) { console.warn(e); setXlStatus(id, 'Sin conexión: se subirá luego'); }
+}
+async function downloadXlsx(it) {
+  if (!it || it.t !== 'xl') return;
+  try { const blob = await exportWorkbook(it.sheets), a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = (it.n || it.f?.n?.replace(/\.[^.]+$/, '') || 'Hoja de cálculo') + '.xlsx'; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 30000); }
+  catch (e) { flash(e.message || 'No se pudo crear el Excel'); }
+}
+function listPop(btn, entries) {
+  document.querySelector('.nt-list')?.remove();
+  const p = document.createElement('div'); p.className = 'nt-list';
+  p.innerHTML = entries.map(e => e === '-' ? '<hr>' : `<button data-li="${e[0]}"${e[2] ? ' class="dng"' : ''}>${e[1]}</button>`).join('');
+  document.body.appendChild(p); const r = btn.getBoundingClientRect();
+  p.style.left = Math.max(8, Math.min(innerWidth - p.offsetWidth - 8, r.right - p.offsetWidth)) + 'px'; p.style.top = Math.max(8, Math.min(innerHeight - p.offsetHeight - 8, r.bottom + 4)) + 'px';
+  return new Promise(res => { const close = v => { p.remove(); document.removeEventListener('pointerdown', out, true); res(v); }; const out = e => { if (!p.contains(e.target)) close(null); }; document.addEventListener('pointerdown', out, true); p.onclick = e => { const b = e.target.closest('[data-li]'); if (b) close(b.dataset.li); }; });
+}
+async function sheetMenu(it, api, btn) {
+  const k = await listPop(btn, [['row', 'Insertar fila debajo'], ['col', 'Insertar columna a la derecha'], ['delrow', 'Eliminar fila(s) seleccionada(s)'], ['delcol', 'Eliminar columna(s) seleccionada(s)'], '-',
+    ['ren', 'Renombrar hoja'], ['delsh', 'Eliminar esta hoja', true], '-', ['xlsx', 'Descargar Excel (.xlsx)'], ...(it.fx ? [['drive', 'Abrir la copia en Drive']] : []), ...(it.f ? [['orig', 'Abrir el Excel original'], ['reload', 'Volver a cargar el original']] : []), ['tabla', 'Crear Tabla PABE con esta hoja']]);
+  if (!k) return;
+  if (k === 'row') api.insertRow(); if (k === 'col') api.insertCol(); if (k === 'delrow') api.deleteRows(); if (k === 'delcol') api.deleteCols();
+  if (k === 'ren') api.rename(); if (k === 'delsh') api.removeSheet();
+  if (k === 'xlsx') downloadXlsx(it);
+  if (k === 'drive') openFile(it.fx, true); if (k === 'orig') openFile(it.f, false);
+  if (k === 'reload') { if (!confirm('¿Volver a cargar el Excel original? Se perderán los cambios hechos aquí.')) return; try { const u = await files.url(it.f.id); const b = await (await fetch(u)).blob(); const r = await importWorkbook(new File([b], it.f.n)); api.replace(r.sheets); flash('Original cargado'); } catch (e) { flash(e.message || 'No se pudo cargar'); } }
+  if (k === 'tabla') { const rows = sheetTSV(api.sheet).split('\n').map(l => l.split('\t')).filter(r => r.some(Boolean)); if (rows.length < 1) return flash('La hoja está vacía'); const b = bboxOf(it); tableFromRows(rows.slice(0, 3000), { x: b.x1, y: b.y2 + 40 }); }
+}
+// Elegir qué hacer con un Excel que llega a la nota
+function choose(title, opts) {
+  return new Promise(res => {
+    const d = $('#ntChoose');
+    d.innerHTML = `<div class="scrim"></div><div class="nt-ch" role="dialog"><h3>${esc(title)}</h3>${opts.map(([k, t, sub]) => `<button data-ch="${k}"><b>${t}</b><small>${sub}</small></button>`).join('')}<button data-ch="" class="cancel">Cancelar</button></div>`;
+    d.hidden = false;
+    d.onclick = e => { const b = e.target.closest('[data-ch]'); if (!b && !e.target.classList.contains('scrim')) return; d.hidden = true; res(b ? b.dataset.ch : ''); };
+  });
+}
+async function importSheetFile(f, w) {
+  const how = await choose(`«${f.name}»`, [
+    ['sheet', 'Hoja de cálculo incrustada', 'Como en Excel: celdas, fórmulas, varias hojas, filtros y orden. Se guarda una copia actualizada en Drive.'],
+    ['table', 'Tabla PABE', 'Tabla tipo Notion con filtros, orden y propiedades (primera hoja, valores sin fórmulas).'],
+    ['file', 'Solo adjuntar el archivo', 'Se guarda en la nota y en Drive sin abrirlo.']]);
+  if (!how) return;
+  if (how === 'file') return attach([f], w, true);
+  flash('Leyendo «' + f.name + '»…');
+  try {
+    const csv = /\.(csv|tsv)$/i.test(f.name), name = f.name.replace(/\.[^.]+$/, '');
+    let sheets, truncated = false;
+    if (csv) { const rows = parseTable('', await f.text()); if (!rows) throw new Error('No se reconoce la tabla del archivo'); sheets = [sheetFromRows(rows, name)]; }
+    else ({ sheets, truncated } = await importWorkbook(f));
+    if (how === 'table') { const rows = sheetTSV(sheets[0]).split('\n').map(l => l.split('\t')).filter(r => r.some(Boolean)); if (!rows.length) throw new Error('La primera hoja está vacía'); tableFromRows(rows.slice(0, 3000), w); if (rows.length > 3000) flash('Tabla creada con las primeras 3.000 filas'); return; }
+    const ref = csv ? null : await files.add('notas', f);
+    addSheetItem(w, { n: name, sheets, f: ref || undefined });
+    flash(truncated ? 'Excel muy grande: se han cargado las primeras 20.000 filas' : `Excel incrustado: ${sheets.length} hoja${sheets.length > 1 ? 's' : ''}`);
+  } catch (e) { console.warn(e); flash(e.message || 'No se pudo leer el archivo'); }
+}
+async function embedFileItem(it) {
+  if (!it?.f) return;
+  try {
+    flash('Abriendo «' + it.f.n + '»…');
+    const u = await files.url(it.f.id); if (!u) throw new Error('El archivo aún no está en este dispositivo');
+    const b = await (await fetch(u)).blob(), r = await importWorkbook(new File([b], it.f.n));
+    snap(); const n = { id: it.id, t: 'xl', x: it.x, y: it.y, w: 760, h: 400, s: 0, n: it.f.n.replace(/\.[^.]+$/, ''), sheets: r.sheets, f: it.f };
+    cur.doc.tabs[cur.tab] = items().map(i => i.id === it.id ? n : i); sel = new Set([n.id]); renderItems(); dirty();
+  } catch (e) { flash(e.message || 'No se pudo abrir'); }
+}
 
 /* =================== herramientas =================== */
 // Círculo de color: al tocarlo se abre la paleta (colores + grosor). Así la barra ocupa poco, también en el móvil.
@@ -227,9 +475,9 @@ function togglePenPop() {
   pop.style.top = Math.max(8, r.top - h - 10) + 'px';
 }
 function syncTools() {
-  root.querySelectorAll('[data-k]').forEach(b => b.classList.toggle('on', !eraser && b.dataset.k === kind));
+  root.querySelectorAll('[data-k]').forEach(b => b.classList.toggle('on', !eraser && !lasso && b.dataset.k === kind));
   const sw = $('#ntColor'); sw.style.setProperty('--c', penCss(pen)); sw.style.setProperty('--d', (8 + penSize * 6) + 'px'); sw.classList.toggle('on', !eraser);
-  $('#ntEraser').classList.toggle('on', eraser); $('#ntShapes').classList.toggle('on', shapes);
+  $('#ntEraser').classList.toggle('on', eraser); $('#ntShapes').classList.toggle('on', shapes); $('#ntLasso').classList.toggle('on', lasso); stage.classList.toggle('lassoing', lasso);
   $('#ntShapes').title = shapes ? 'Reconocer formas: activado' : 'Reconocer formas: desactivado';
   stage.classList.toggle('erasing', eraser);
 }
@@ -277,7 +525,24 @@ function newStroke(w, e) { const s = { id: gid(), t: 's', k: kind, c: pen, w: rd
 function cancelAct() { if (act && act.k === 'draw') { cur.doc.tabs[cur.tab] = items().filter(i => i !== act.s); act.el.remove(); hist.pop(); } act = null; }
 function tapAt(e) { const w = toW(e); if (e.pointerType === 'touch') { addText(w); return; } if (isDouble(e, 'bg')) addText(w); else showCaret(w); }
 
+let lpT = null, lpAt = 0;
+// Pulsación larga (dedo): abre el menú (Copiar, Pegar, Seleccionar…) en vez de dibujar
+function armLongPress(e) {
+  clearTimeout(lpT); if (e.pointerType !== 'touch') return;
+  const x = e.clientX, y = e.clientY, a0 = act;
+  lpT = setTimeout(() => {
+    if (act !== a0 || !a0) return;
+    if (a0.k === 'draw') cancelAct(); else if (a0.k === 'pan' && a0.cam) { cam = { ...a0.cam }; applyCam(); }
+    act = null; lpAt = performance.now(); navigator.vibrate?.(10);
+    if (a0.k === 'move') { sel = new Set([a0.it.id]); markSel(); showMenu('sel'); }
+    else if (sel.size && inSelBox(toW({ clientX: x, clientY: y }))) showMenu('sel');
+    else { sel = new Set(); markSel(); showMenu('bg', { x, y }); }
+  }, 520);
+}
 function onDown(e) {
+  // Hojas de cálculo: el toque lo atiende la propia hoja (celdas, desplazamiento, filtros); se mueven por ⋮⋮
+  const xl = e.target.closest('.xl');
+  if (xl && !e.target.closest('.xl-grip') && !e.target.classList.contains('rz')) { if (!(sel.size === 1 && sel.has(xl.dataset.id))) { sel = new Set([xl.dataset.id]); markSel(); } hideMenu(); return; }
   // Tablas dentro de la nota: el ratón y el lápiz trabajan en la tabla; con el dedo, arrastrar mueve el lienzo y dos dedos hacen zoom
   if (e.target.closest('.tbl') && !e.target.closest('.tbl-h span') && !e.target.classList.contains('rz')) {
     if (e.pointerType !== 'touch' || e.target.closest('input,textarea,select,[contenteditable="true"],[contenteditable="plaintext-only"]')) return;
@@ -289,34 +554,51 @@ function onDown(e) {
   }
   if (e.target.closest('button,a') || e.target.closest('.tx.editing')) return;
   if (editing()) document.activeElement.blur();
+  if (e.button !== 2) hideMenu();
   const isPen = e.pointerType === 'pen', isTouch = e.pointerType === 'touch';
   if (isPen) {
     if (!sawPen) { sawPen = true; L.set('sawPen', true); }
     penDown = true;
     for (const [id, q] of ptrs) if (q.t === 'touch') ptrs.delete(id);
-    if (act && act.touch) { if (act.k === 'draw') cancelAct(); else { if (act.cam) { cam = { ...act.cam }; applyCam(); } act = null; } }
+    if (act && act.touch) { clearTimeout(lpT); if (act.k === 'draw') cancelAct(); else { if (act.k === 'lasso') act.el.remove(); if (act.k === 'movesel') renderItems(); if (act.cam) { cam = { ...act.cam }; applyCam(); } act = null; } }
   }
   if (isTouch && (penDown || performance.now() - penUpAt < 500 || (sawPen && ((e.width || 0) > 50 || (e.height || 0) > 50)))) return;
   try { stage.setPointerCapture(e.pointerId); } catch (_) {}
-  ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY, t: e.pointerType });
-  if (ptrs.size === 2) { cancelAct(); hideCaret(); const [a, b] = [...ptrs.values()]; act = { k: 'pinch', d: dist(a, b) || 1, m: mid(a, b), cam: { ...cam }, touch: true }; return; }
+  ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY, t: e.pointerType });
+  if (ptrs.size === 2) { clearTimeout(lpT); if (act?.k === 'lasso') act.el.remove(); if (act?.k === 'movesel') { renderItems(); } cancelAct(); hideCaret(); const [a, b] = [...ptrs.values()]; act = { k: 'pinch', d: dist(a, b) || 1, m: mid(a, b), cam: { ...cam }, touch: true }; return; }
   if (ptrs.size > 2 || e.button === 2) return;
   const w = toW(e), itEl = e.target.closest('.it');
   if (e.button === 1 || space) { act = { k: 'pan', sx: e.clientX, sy: e.clientY, cam: { ...cam } }; stage.classList.add('panning'); return; }
+  // Lazo: rodear para seleccionar (con dedo, ratón o lápiz)
+  if (lasso) { hideCaret(); sel = new Set(); markSel(); const el = document.createElementNS('http://www.w3.org/2000/svg', 'path'); el.setAttribute('class', 'nt-lasso'); ink.appendChild(el); act = { k: 'lasso', P: [rd(w.x), rd(w.y)], el, touch: isTouch }; return; }
   if (eraser || (isPen && (e.buttons & 32))) { hideCaret(); snap(); act = { k: 'erase', hit: false }; eraseAt(w); return; }
-  if (!isPen && itEl) {
-    const it = items().find(i => i.id === itEl.dataset.id); if (!it) return; selId = it.id; markSel(); hideCaret();
-    act = e.target.classList.contains('rz') ? { k: 'resize', it, el: itEl, sx: e.clientX, w0: it.w } : { k: 'move', it, el: itEl, sx: e.clientX, sy: e.clientY, x0: it.x, y0: it.y, moved: false }; return;
+  // Mover todo lo seleccionado arrastrando dentro del recuadro
+  if (!e.target.classList.contains('rz') && inSelBox(w)) { hideCaret(); act = { k: 'movesel', sx: e.clientX, sy: e.clientY, moved: false, touch: isTouch }; armLongPress(e); return; }
+  if ((!isPen || e.target.closest('.xl-grip,.tbl-h span')) && itEl) {
+    const it = items().find(i => i.id === itEl.dataset.id); if (!it) return; sel = new Set([it.id]); markSel(); hideCaret();
+    act = e.target.classList.contains('rz') ? { k: 'resize', it, el: itEl, sx: e.clientX, sy: e.clientY, w0: it.w || itEl.offsetWidth, h0: it.h || itEl.offsetHeight } : { k: 'move', it, el: itEl, sx: e.clientX, sy: e.clientY, x0: it.x, y0: it.y, moved: false, touch: isTouch };
+    if (act.k === 'move') armLongPress(e); return;
   }
-  selId = null; markSel();
-  if (isTouch && sawPen) { act = { k: 'pan', sx: e.clientX, sy: e.clientY, cam: { ...cam }, tap: true, touch: true }; return; }
+  sel = new Set(); markSel();
+  if (isTouch && sawPen) { act = { k: 'pan', sx: e.clientX, sy: e.clientY, cam: { ...cam }, tap: true, touch: true }; armLongPress(e); return; }
   hideCaret(); snap();
   const s = newStroke(w, e); items().push(s); const el = mkPath(s); ink.appendChild(el);
   act = { k: 'draw', s, el, isPen, touch: isTouch, lt: e.timeStamp, lx: e.clientX, ly: e.clientY, moved: 0 };
+  if (isTouch) armLongPress(e);
 }
 function onMove(e) {
   if (e.pointerType === 'mouse' && !ptrs.size) lastW = caretW || toW(e);
-  const q = ptrs.get(e.pointerId); if (!q) return; q.x = e.clientX; q.y = e.clientY; if (!act) return;
+  const q = ptrs.get(e.pointerId); if (!q) return;
+  if (lpT && Math.hypot(e.clientX - q.x0, e.clientY - q.y0) > 9) { clearTimeout(lpT); lpT = null; }
+  q.x = e.clientX; q.y = e.clientY; if (!act) return;
+  if (act.k === 'lasso') { const w = toW(e), P = act.P; if (Math.hypot(w.x - P[P.length - 2], w.y - P[P.length - 1]) * cam.k > 3) { P.push(rd(w.x), rd(w.y)); act.el.setAttribute('d', polyD(P, true)); act.el.style.strokeWidth = 1.5 / cam.k; } return; }
+  if (act.k === 'movesel') {
+    const dx = (e.clientX - act.sx) / cam.k, dy = (e.clientY - act.sy) / cam.k;
+    if (!act.moved) { if (Math.hypot(dx, dy) * cam.k < 5) return; snap(); act.moved = true; hideMenu(); }
+    act.dx = dx; act.dy = dy;
+    selItems().forEach(i => { if (i.t === 's') ink.querySelector(`[data-id="${i.id}"]`)?.setAttribute('transform', `translate(${dx} ${dy})`); else { const el = itemsEl.querySelector(`[data-id="${i.id}"]`); if (el) { el.style.left = i.x + dx + 'px'; el.style.top = i.y + dy + 'px'; } } });
+    $('.nt-selbox', root).style.transform = `translate(${dx}px,${dy}px)`; return;
+  }
   if (act.k === 'pinch') { if (ptrs.size < 2) return; const [a, b] = [...ptrs.values()], r = stage.getBoundingClientRect(), m = mid(a, b), k = Math.min(6, Math.max(.1, act.cam.k * dist(a, b) / act.d)); const wx = (act.m.x - r.left - act.cam.x) / act.cam.k, wy = (act.m.y - r.top - act.cam.y) / act.cam.k; cam.k = k; cam.x = m.x - r.left - wx * k; cam.y = m.y - r.top - wy * k; applyCam(); return; }
   if (act.k === 'pan') { const dx = e.clientX - act.sx, dy = e.clientY - act.sy; if (act.tbl && act.tap && Math.hypot(dx, dy) < 10) return; if (Math.hypot(dx, dy) > 6) act.tap = false; cam.x = act.cam.x + dx; cam.y = act.cam.y + dy; applyCam(); return; }
   if (act.k === 'draw') {
@@ -339,18 +621,21 @@ function onMove(e) {
   }
   if (act.k === 'erase') { eraseAt(toW(e)); return; }
   if (act.k === 'move') { const dx = (e.clientX - act.sx) / cam.k, dy = (e.clientY - act.sy) / cam.k; if (!act.moved) { if (Math.hypot(dx, dy) * cam.k < 4) return; snap(); act.moved = true; } act.it.x = rd(act.x0 + dx); act.it.y = rd(act.y0 + dy); act.el.style.left = act.it.x + 'px'; act.el.style.top = act.it.y + 'px'; return; }
-  if (act.k === 'resize') { if (!act.snapped) { snap(); act.snapped = true; } act.it.w = rd(Math.max(40, act.w0 + (e.clientX - act.sx) / cam.k)); act.el.style.width = act.it.w + 'px'; }
+  if (act.k === 'resize') { if (!act.snapped) { snap(); act.snapped = true; } act.it.w = rd(Math.max(act.it.t === 'xl' ? 280 : 40, act.w0 + (e.clientX - act.sx) / cam.k)); act.el.style.width = act.it.w + 'px'; if (act.it.t === 'xl') { act.it.h = rd(Math.max(180, act.h0 + (e.clientY - act.sy) / cam.k)); act.el.style.height = act.it.h + 'px'; } }
 }
 function onUp(e) {
   if (e.pointerType === 'pen') { penDown = false; penUpAt = performance.now(); }
+  clearTimeout(lpT); lpT = null;
   if (!ptrs.has(e.pointerId)) return;
   ptrs.delete(e.pointerId); stage.classList.remove('panning'); if (!act) return;
   const a = act; if (a.k === 'pinch') { if (!ptrs.size) act = null; return; }
   act = null; const ok = e.type === 'pointerup';
+  if (a.k === 'lasso') { a.el.remove(); if (ok && a.P.length >= 6) lassoSelect(a.P); else { lasso = false; syncTools(); } return; }
+  if (a.k === 'movesel') { if (a.moved && ok) { selItems().forEach(i => shiftItem(i, a.dx, a.dy)); renderItems(); dirty(); showMenu('sel'); } else if (a.moved) renderItems(); else if (ok) { if (menuFor === 'sel') hideMenu(); else showMenu('sel'); } return; }
   if (a.k === 'draw') { if (!a.isPen && a.moved < 4) { cur.doc.tabs[cur.tab] = items().filter(i => i !== a.s); a.el.remove(); hist.pop(); if (ok) tapAt(e); return; } act0v = a.v; if (a.s.k === 'brush' && a.raw) { const p = a.s.p; p.push(a.raw.x, a.raw.y, p[p.length - 1]); } finishStroke(a.s, a.el); dirty(); return; }
   if (a.k === 'pan' && a.tbl) return; // un toque en la tabla lo atiende la propia tabla
   if (a.k === 'pan' && a.tap && ok) { tapAt(e); return; }
-  if (a.k === 'move') { if (a.moved) dirty(); else if (ok && a.it.t === 'x') editAt(a.el, e); return; }
+  if (a.k === 'move') { if (a.moved) { dirty(); drawSelBox(); } else if (ok && a.it.t === 'x' && sel.size <= 1) editAt(a.el, e); else if (ok) showMenu('sel'); return; }
   if (a.k === 'resize' && a.snapped) dirty();
   if (a.k === 'erase') { if (a.hit) dirty(); else hist.pop(); }
 }
@@ -431,18 +716,17 @@ function tableFromRows(rows, w) {
   items().push(t); renderItems(); dirty(); flash('Tabla pegada: ' + body.length + ' filas');
 }
 // Pega o suelta contenido de fuera en el punto w: tabla → Tabla PABE; texto → cuadro de texto; archivos → adjuntos
-async function dropIn(w, { html = '', text = '', files: fs = [] } = {}) {
-  const csv = fs.filter(f => /\.(csv|tsv)$/i.test(f.name)), other = fs.filter(f => !csv.includes(f));
-  for (const f of csv) { const rows = parseTable('', await f.text()); if (rows) tableFromRows(rows, w); else other.push(f); }
-  if (other.length) { attach(other, w); return true; }
-  if (csv.length) return true;
-  const rows = parseTable(html, text); if (rows) { tableFromRows(rows, w); return true; }
+async function dropIn(w, { html = '', text = '', files: fs = [] } = {}, as) {
+  if (fs.length) { attach(fs, w); return true; }
+  const rows = parseTable(html, text);
+  if (rows) { if (as === 'sheet') addSheetItem(w, { sheets: [sheetFromRows(rows)] }); else tableFromRows(rows, w); return true; }
+  if (as === 'sheet' && text?.trim()) { addSheetItem(w, { sheets: [sheetFromRows(text.trim().split('\n').map(l => [l]))] }); return true; }
   if (!text && html) text = new DOMParser().parseFromString(html, 'text/html').body.innerText;
   if (text?.trim()) { addText(w, ''); const el = itemsEl.querySelector('.tx.editing'); if (el) setPlain(el, text.trim(), text.trim().length); return true; }
   return false;
 }
 // Botón Pegar: primero lo copiado dentro de PABE; si no, el portapapeles del sistema
-async function pasteSystem(w) {
+async function pasteSystem(w, as) {
   let html = '', text = ''; const fs = [];
   try {
     for (const it of await navigator.clipboard.read()) for (const ty of it.types) {
@@ -450,15 +734,18 @@ async function pasteSystem(w) {
       else if (ty === 'text/plain') text = await (await it.getType(ty)).text();
       else if (ty.startsWith('image/')) { const b = await it.getType(ty); fs.push(new File([b], 'imagen.' + ty.split('/')[1], { type: ty })); }
     }
-  } catch (e) { try { text = await navigator.clipboard.readText(); } catch (_) { if (clip) return pasteClip(w); return flash('Permite el acceso al portapapeles para pegar'); } }
-  // lo último copiado dentro de PABE (trazos, tablas, imágenes) tiene su propio portapapeles
-  if (clip && !fs.length && (!text || text === clip._txt)) return pasteClip(w);
-  if (!(await dropIn(w, { html, text, files: fs }))) flash('El portapapeles está vacío');
+  } catch (e) { try { text = await navigator.clipboard.readText(); } catch (_) { if (clip?.items) return pasteClip(w); return flash('Permite el acceso al portapapeles para pegar'); } }
+  // lo último copiado dentro de PABE (trazos, tablas, hojas, imágenes) se pega tal cual
+  if (as !== 'sheet' && await isOwnClip(fs, text)) return pasteClip(w);
+  if (!(await dropIn(w, { html, text, files: fs }, as))) flash('El portapapeles está vacío');
 }
 
-async function attach(list, w, target) {
+async function attach(list, w, raw) {
   if (!list.length) return;
-  w = w || caretW || centerW(); let n = 0; hideCaret();
+  w = w || caretW || centerW();
+  // Excel, hojas de cálculo y CSV: se elige si incrustarlos como hoja, como Tabla PABE o solo adjuntarlos
+  if (!raw) { const sh = list.filter(f => SHEET_RE.test(f.name)); list = list.filter(f => !sh.includes(f)); for (const f of sh) await importSheetFile(f, w); if (!list.length) return; }
+  let n = 0; hideCaret();
   for (const f of list) {
     const pos = { x: rd(w.x + n * 28 / cam.k), y: rd(w.y + n * 28 / cam.k) }; n++;
     const ref = await files.add('notas', f), isImg = /^image\//.test(f.type);
@@ -522,6 +809,7 @@ export async function mount(el, opts = {}) {
   toast = document.getElementById('toast');
   stage = $('#ntStage'); world = $('.nt-world', el); ink = $('.nt-ink', el); itemsEl = $('.nt-items', el);
   caret = document.createElement('div'); caret.className = 'nt-caret'; caret.hidden = true; world.appendChild(caret);
+  const sb = document.createElement('div'); sb.className = 'nt-selbox'; sb.hidden = true; world.appendChild(sb);
   await col.init(); await tags.init(); tags.system(SYS, 'Áreas');
   buildTable(); syncTools(); newNote();
 
@@ -529,8 +817,19 @@ export async function mount(el, opts = {}) {
   stage.addEventListener('scroll', () => { if (stage.scrollTop || stage.scrollLeft) { stage.scrollTop = 0; stage.scrollLeft = 0; } });
   stage.addEventListener('pointerdown', onDown); stage.addEventListener('pointermove', onMove);
   stage.addEventListener('pointerup', onUp); stage.addEventListener('pointercancel', onUp);
-  ['touchstart', 'touchmove'].forEach(t => stage.addEventListener(t, e => { if (!e.target.closest('.tx.editing') && !e.target.closest('button,a') && !(e.target.closest('.tbl') && !e.target.closest('.tbl-h span') && e.touches.length < 2 && t === 'touchstart')) e.preventDefault(); }, { passive: false }));
-  stage.addEventListener('contextmenu', e => e.preventDefault());
+  ['touchstart', 'touchmove'].forEach(t => stage.addEventListener(t, e => { if (!e.target.closest('.tx.editing') && !e.target.closest('button,a') && !(e.target.closest('.xl') && !e.target.closest('.xl-grip,.rz')) && !(e.target.closest('.tbl') && !e.target.closest('.tbl-h span') && e.touches.length < 2 && t === 'touchstart')) e.preventDefault(); }, { passive: false }));
+  // Clic derecho (o pulsación larga en Android): menú de copiar, pegar, seleccionar…
+  stage.addEventListener('contextmenu', e => {
+    if (e.target.closest('.tx.editing,input,textarea,.xl-body')) return; // ahí, el menú del sistema
+    e.preventDefault(); if (performance.now() - lpAt < 900) return;
+    const itEl = e.target.closest('.it'), w = toW(e);
+    if (itEl) { if (!sel.has(itEl.dataset.id)) { sel = new Set([itEl.dataset.id]); markSel(); } showMenu('sel'); }
+    else if (inSelBox(w)) showMenu('sel');
+    else { sel = new Set(); markSel(); showMenu('bg', { x: e.clientX, y: e.clientY }); }
+  });
+  $('#ntMenu').addEventListener('pointerdown', e => e.preventDefault()); // no quitar el foco de lo que se está editando
+  $('#ntMenu').addEventListener('click', e => { const b = e.target.closest('[data-mn]'); if (b) menuAction(b.dataset.mn); });
+  document.addEventListener('pointerdown', e => { if (menuFor && !e.target.closest('#ntMenu') && !e.target.closest('#ntStage')) hideMenu(); }, true);
   stage.addEventListener('wheel', e => { e.preventDefault(); if (e.ctrlKey || e.metaKey) zoomAt(e.clientX, e.clientY, Math.exp(-e.deltaY * .01)); else { cam.x -= e.deltaX; cam.y -= e.deltaY; applyCam(); } }, { passive: false });
   // Soltar aquí lo que se arrastra desde otra ventana o app (texto, tablas, archivos, imágenes)
   stage.addEventListener('dragover', e => { if (e.target.closest('.tx.editing,.tbl input')) return; e.preventDefault(); if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'; });
@@ -539,7 +838,7 @@ export async function mount(el, opts = {}) {
     e.preventDefault(); const dt = e.dataTransfer; if (!dt) return;
     dropIn(toW(e), { files: [...dt.files], html: dt.getData('text/html'), text: dt.getData('text/plain') || dt.getData('text/uri-list') });
   });
-  stage.addEventListener('click', e => { const o = e.target.closest('[data-fopen]'), d = e.target.closest('[data-fdrive]'); if (o || d) { const it = items().find(i => i.id === e.target.closest('.it').dataset.id); if (it) openFile(it.f, !!d); } });
+  stage.addEventListener('click', e => { const o = e.target.closest('[data-fopen]'), d = e.target.closest('[data-fdrive]'), x = e.target.closest('[data-fembed]'); if (o || d || x) { const it = items().find(i => i.id === e.target.closest('.it').dataset.id); if (it) x ? embedFileItem(it) : openFile(it.f, !!d); } });
 
   itemsEl.addEventListener('input', e => { const el = e.target.closest('.tx'); if (!el) return; const it = items().find(i => i.id === el.dataset.id); if (it) { it.s = el.innerText.replace(/\n$/, ''); autoTitle(); dirty(); } });
   itemsEl.addEventListener('focusout', e => { const el = e.target.closest('.tx'); if (!el) return; el.contentEditable = 'false'; el.classList.remove('editing'); const it = items().find(i => i.id === el.dataset.id); if (it && !it.s.trim()) { cur.doc.tabs[cur.tab] = items().filter(i => i !== it); hist.pop(); renderItems(); dirty(); } });
@@ -563,13 +862,15 @@ export async function mount(el, opts = {}) {
   document.addEventListener('pointerdown', e => { const p = $('#ntPenPop'); if (p && !p.hidden && !e.target.closest('#ntPenPop,#ntColor')) p.hidden = true; }, true);
   $('#ntTools').addEventListener('click', e => {
     const b = e.target.closest('button'); if (!b) return;
-    if (b.dataset.k) { kind = b.dataset.k; eraser = false; L.set('kind', kind); }
+    if (b.dataset.k) { kind = b.dataset.k; eraser = false; lasso = false; L.set('kind', kind); }
     if (b.id === 'ntColor') { togglePenPop(); return; }
-    if (b.id === 'ntEraser') eraser = !eraser;
+    if (b.id === 'ntEraser') { eraser = !eraser; lasso = false; }
     if (b.id === 'ntShapes') { shapes = !shapes; L.set('shapes', shapes); flash(shapes ? 'Formas: se convierten en limpias' : 'Formas: se quedan a mano'); }
     if (b.id === 'ntText') { addText(caretW || lastW || centerW()); return; }
     if (b.id === 'ntInsTable') { addTable(caretW || lastW || centerW()); return; }
-    if (b.id === 'ntCopy') { copySel(false); return; }
+    if (b.id === 'ntInsSheet') { addSheetItem(caretW || lastW || centerW(), { sheets: [newSheet()] }); flash('Hoja de cálculo: escribe en las celdas; =SUMA(A1:A5)… Para traer un Excel, adjúntalo con el clip'); return; }
+    if (b.id === 'ntLasso') { lasso = !lasso; eraser = false; if (lasso) { sel = new Set(); markSel(); flash('Rodea lo que quieras seleccionar'); } syncTools(); return; }
+    if (b.id === 'ntCopy') { copySel(false); hideMenu(); return; }
     if (b.id === 'ntCut') { copySel(true); return; }
     if (b.id === 'ntPaste') { pasteSystem(caretW || lastW || centerW()); return; }
     if (b.id === 'ntUndo') undo();
@@ -596,7 +897,7 @@ export async function mount(el, opts = {}) {
       renderTabs(); };
     i.onkeydown = ev => { if (ev.key === 'Enter') fin(true); if (ev.key === 'Escape') fin(false); }; i.onblur = () => fin(true);
   });
-  function switchTab(id) { if (editing()) document.activeElement.blur(); cur.tab = id; hist = []; redo = []; selId = null; hideCaret(); resetCam(); renderTabs(); renderItems(); }
+  function switchTab(id) { if (editing()) document.activeElement.blur(); cur.tab = id; hist = []; redo = []; sel = new Set(); hideMenu(); hideCaret(); resetCam(); renderTabs(); renderItems(); }
 
   $('#ntTagBtn').onclick = e => { e.stopPropagation(); $('#ntTagPop').hidden ? openTagPop() : ($('#ntTagPop').hidden = true); };
   document.addEventListener('pointerdown', e => { const p = $('#ntTagPop'); if (p && !p.hidden && !e.target.closest('#ntTagPop') && !e.target.closest('#ntTagBtn')) p.hidden = true; });
@@ -615,30 +916,33 @@ export async function mount(el, opts = {}) {
   $('#ntChips').addEventListener('click', e => { const b = e.target.closest('[data-rm]'); if (!b) return; cur.meta.tags = cur.meta.tags.filter(x => x !== b.dataset.rm); renderChips(); dirty(); });
 
   document.addEventListener('paste', e => {
-    if (!active() || editing() || e.target.closest?.('input,textarea')) return;
+    if (!active() || editing() || e.target.closest?.('input,textarea,.xl,[contenteditable="true"]') || !$('#ntLibPanel').hidden) return;
     const fs = [...e.clipboardData.files], t = e.clipboardData.getData('text/plain'), h = e.clipboardData.getData('text/html');
-    if (clip && !fs.length && (!t || t === clip._txt)) { e.preventDefault(); pasteClip(caretW || lastW); return; }
-    if (fs.length || t || h) { e.preventDefault(); dropIn(caretW || lastW || centerW(), { files: fs, html: h, text: t }); }
+    if (!fs.length && !t && !h) { if (clip?.items) { e.preventDefault(); pasteClip(caretW || lastW); } return; }
+    e.preventDefault(); const w = caretW || lastW;
+    isOwnClip(fs, t).then(own => own ? pasteClip(w) : dropIn(w || centerW(), { files: fs, html: h, text: t }));
   });
   document.addEventListener('keydown', e => {
     if (!active()) return;
     if (e.key === ' ' && !editing() && !e.target.closest('input') && !caretW) space = true;
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); $('#ntLibPanel').hidden ? openLib() : closeLib(); return; }
-    if (e.key === 'Escape') { hideCaret(); eraser = false; syncTools(); if (!$('#ntTagPop').hidden) { $('#ntTagPop').hidden = true; return; } if (!$('#ntLibPanel').hidden) { closeLib(); return; } if (editing()) document.activeElement.blur(); selId = null; markSel(); return; }
-    if (!$('#ntLibPanel').hidden || editing() || e.target.closest('input,textarea,select,[contenteditable=true],[contenteditable=plaintext-only],.tbl')) return;
+    if (e.key === 'Escape') { hideCaret(); eraser = false; syncTools(); if (!$('#ntTagPop').hidden) { $('#ntTagPop').hidden = true; return; } if (!$('#ntLibPanel').hidden) { closeLib(); return; } if (editing()) document.activeElement.blur(); if (lasso) { lasso = false; syncTools(); } sel = new Set(); markSel(); hideMenu(); return; }
+    if (!$('#ntLibPanel').hidden || editing() || e.target.closest('input,textarea,select,[contenteditable=true],[contenteditable=plaintext-only],.tbl,.xl')) return;
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') { e.preventDefault(); selectAll(); return; }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'd' && sel.size) { e.preventDefault(); dupSel(); return; }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') { e.preventDefault(); e.shiftKey ? redoF() : undo(); return; }
-    if ((e.key === 'Delete' || e.key === 'Backspace') && selId) { e.preventDefault(); delSel(); return; }
-    if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'c' || e.key.toLowerCase() === 'x') && selId) { e.preventDefault(); copySel(e.key.toLowerCase() === 'x'); return; }
+    if ((e.key === 'Delete' || e.key === 'Backspace') && sel.size) { e.preventDefault(); delSel(); return; }
+    if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'c' || e.key.toLowerCase() === 'x') && sel.size) { e.preventDefault(); copySel(e.key.toLowerCase() === 'x'); return; }
     if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey && !(e.key === ' ' && !caretW)) { e.preventDefault(); addText(caretW || lastW || centerW(), e.key); }
   });
   document.addEventListener('keyup', e => { if (e.key === ' ') space = false; });
-  addEventListener('pagehide', saveNow);
-  document.addEventListener('visibilitychange', () => { if (document.hidden) saveNow(); });
+  addEventListener('pagehide', () => { flushXlsx(); saveNow(); });
+  document.addEventListener('visibilitychange', () => { if (document.hidden) { flushXlsx(); saveNow(); } });
 
   on('change', d => { if (d.col === 'notas' && !$('#ntLibPanel').hidden) table.render(); });
   on('cfg', d => { if (d.col === 'notas') table.render(); });
   on('tags', () => { if (cur) renderChips(); if (!$('#ntLibPanel').hidden) table.render(); });
-  on('remote', async d => { if (d.col === 'notas' && cur && cur.meta.id === d.id && !editing()) { const m = col.index.get(d.id), doc = await col.load(d.id); if (doc) { cur.meta = clone(m); cur.doc = clone(doc); m.tabs.forEach(t => { cur.doc.tabs[t.id] = cur.doc.tabs[t.id] || []; }); if (!cur.doc.tabs[cur.tab]) cur.tab = m.tabs[0].id; renderNote(); } } });
+  on('remote', async d => { if (d.col === 'notas' && cur && cur.meta.id === d.id && !editing() && !document.activeElement?.closest?.('.xl,.tbl') && !xlT.size) { const m = col.index.get(d.id), doc = await col.load(d.id); if (doc) { cur.meta = clone(m); cur.doc = clone(doc); m.tabs.forEach(t => { cur.doc.tabs[t.id] = cur.doc.tabs[t.id] || []; }); if (!cur.doc.tabs[cur.tab]) cur.tab = m.tabs[0].id; renderNote(); } } });
   on('file', d => { const u = urlCache.get(d.localId); if (u) urlCache.set(d.id, u); });
   if (opts.lib) openLib();
 }
@@ -646,7 +950,7 @@ let isActive = () => true;
 function active() { return isActive(); }
 export function setActiveCheck(fn) { isActive = fn; }
 export function enter() { closeLib(); newNote(); }
-export function leave() { saveNow(); }
+export function leave() { flushXlsx(); saveNow(); hideMenu(); }
 
 /* =================== herramientas para el asistente =================== */
 const fmt = new Intl.DateTimeFormat('es-ES', { day: 'numeric', month: 'short', year: 'numeric' });

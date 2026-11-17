@@ -233,7 +233,22 @@ export const files = {
     return b ? URL.createObjectURL(b) : null;
   },
   async driveUrl(id) { const rid = await this.realId(id); return rid ? drive.viewUrl(rid) : null; },
+  // Sustituye el contenido de un adjunto (p. ej. la copia .xlsx de una hoja de cálculo) y lo actualiza en Drive
+  async replace(ref, blob) {
+    await blobs.set(ref.id, blob); ref.sz = blob.size;
+    const rid = await this.realId(ref.id);
+    if (!rid) return true; // aún en la cola de subida: se subirá ya con el contenido nuevo
+    await blobs.set(rid, blob);
+    const p = (await kv.get('files:repl')) || []; if (!p.includes(ref.id)) { p.push(ref.id); await kv.set('files:repl', p); }
+    schedulePush(); return true;
+  },
   async push() {
+    const rp = (await kv.get('files:repl')) || [];
+    while (rp.length) {
+      const id = rp[0], rid = await this.realId(id), b = rid && ((await blobs.get(id)) || (await blobs.get(rid)));
+      if (b) await drive.upload(b, {}, rid);
+      rp.shift(); await kv.set('files:repl', rp);
+    }
     const q = (await kv.get('files:queue')) || []; if (!q.length) return;
     const map = (await kv.get('files:map')) || {};
     while (q.length) {
