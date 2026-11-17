@@ -317,7 +317,7 @@ function copySel(cut) {
 }
 // Dibuja la selección en una imagen PNG (fondo blanco) para pegarla en WhatsApp, correo, Word, Notas…
 function renderPng(list) {
-  const prep = list.map(i => { const el = itemsEl.querySelector(`[data-id="${i.id}"]`); return { i, b: bboxOf(i), el, img: el?.querySelector('img'), tsv: (i.t === 'tb' || i.t === 'xl') ? itemTSV(i) : '' }; });
+  const prep = [...list.filter(i => i.t !== 's'), ...list.filter(i => i.t === 's')].map(i => { const el = itemsEl.querySelector(`[data-id="${i.id}"]`); return { i, b: bboxOf(i), el, img: el?.querySelector('img'), tsv: (i.t === 'tb' || i.t === 'xl') ? itemTSV(i) : '' }; });
   const bb = unionBox(prep.map(p => p.b)), pad = 20, W = bb.x2 - bb.x1 + 2 * pad, H = bb.y2 - bb.y1 + 2 * pad, k = Math.min(2, 4000 / Math.max(W, H));
   const cw0 = Math.ceil(W * k), ch0 = Math.ceil(H * k);
   const pr = (async () => {
@@ -574,7 +574,7 @@ function onDown(e) {
   if (eraser || (isPen && (e.buttons & 32))) { hideCaret(); snap(); act = { k: 'erase', hit: false }; eraseAt(w); return; }
   // Mover todo lo seleccionado arrastrando dentro del recuadro
   if (!e.target.classList.contains('rz') && inSelBox(w)) { hideCaret(); act = { k: 'movesel', sx: e.clientX, sy: e.clientY, moved: false, touch: isTouch }; armLongPress(e); return; }
-  if ((!isPen || e.target.closest('.xl-grip,.tbl-h span')) && itEl) {
+  if ((!isPen || e.target.closest('.xl-grip,.tbl-h span') || e.target.classList.contains('rz')) && itEl) {
     const it = items().find(i => i.id === itEl.dataset.id); if (!it) return; sel = new Set([it.id]); markSel(); hideCaret();
     act = e.target.classList.contains('rz') ? { k: 'resize', it, el: itEl, sx: e.clientX, sy: e.clientY, w0: it.w || itEl.offsetWidth, h0: it.h || itEl.offsetHeight } : { k: 'move', it, el: itEl, sx: e.clientX, sy: e.clientY, x0: it.x, y0: it.y, moved: false, touch: isTouch };
     if (act.k === 'move') armLongPress(e); return;

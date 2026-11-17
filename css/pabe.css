@@ -36,7 +36,7 @@ main{flex:1;position:relative;overflow:hidden}
 .nt-stage{position:absolute;inset:0;overflow:hidden;touch-action:none;cursor:crosshair;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;background-image:radial-gradient(var(--dot) 1px,transparent 1.2px);background-size:24px 24px}
 .nt-stage.erasing{cursor:cell}.nt-stage.panning{cursor:grabbing}
 .nt-world{position:absolute;left:0;top:0;transform-origin:0 0}
-.nt-ink{position:absolute;left:0;top:0;width:1px;height:1px;overflow:visible;pointer-events:none;fill:none;stroke-linecap:round;stroke-linejoin:round;color:var(--ink)}
+.nt-ink{position:absolute;left:0;top:0;z-index:2;width:1px;height:1px;overflow:visible;pointer-events:none;fill:none;stroke-linecap:round;stroke-linejoin:round;color:var(--ink)}
 .nt-caret{position:absolute;background:var(--sel);border-radius:1px;animation:bl 1s steps(2) infinite;pointer-events:none}@keyframes bl{50%{opacity:0}}
 .it{position:absolute;user-select:none;-webkit-user-select:none}
 .tx{width:max-content;white-space:pre-wrap;line-height:1.35;min-width:1ch;max-width:560px;padding:2px 4px;border-radius:4px;outline:none}
@@ -48,7 +48,7 @@ main{flex:1;position:relative;overflow:hidden}
 .fa{font-size:12px;color:var(--mut);padding:4px 6px;border-radius:6px}.fa:hover{background:var(--soft);color:var(--ink)}
 .nt-tools .tl[hidden]{display:none}
 .sel{outline:1.5px solid var(--sel);outline-offset:3px;border-radius:6px}
-.rz{display:none;position:absolute;right:-7px;bottom:-7px;width:14px;height:14px;border-radius:50%;background:var(--bg);border:1.5px solid var(--sel);cursor:nwse-resize}.sel .rz{display:block}
+.rz{display:none;position:absolute;right:-10px;bottom:-10px;width:20px;height:20px;z-index:3;touch-action:none;border-radius:50%;background:var(--bg);border:1.5px solid var(--sel);cursor:nwse-resize}.sel .rz,.xl>.rz{display:block}.rz::before{content:'';position:absolute;inset:-12px}
 .nt-top{position:absolute;left:14px;top:calc(19px + env(safe-area-inset-top));right:270px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;pointer-events:none}.nt-top>*{pointer-events:auto}
 .libb{display:inline-flex;align-items:center;gap:7px;height:32px;padding:0 11px 0 9px;border-radius:9px;border:1px solid var(--line);background:var(--pop);font-size:13px;font-weight:500}
 .libb:hover{border-color:var(--mut)}.libb .sm{display:none}
