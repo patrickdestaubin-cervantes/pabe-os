@@ -17,14 +17,14 @@ const PENS = ['ink', '#8B8D98', '#2F6FEB', '#0090FF', '#12A594', '#2B9A66', '#FF
 const SIZES = [['fino', .6], ['medio', 1], ['grueso', 1.7]];
 const penCss = c => c === 'ink' ? 'var(--ink)' : c;
 // brush = pincel-rotulador (trazo lleno y parejo con un toque de presión, puntas redondas), mark = rotulador fosforito. ball/fount: trazos antiguos (se siguen viendo).
-const KINDS = { brush: { w: 8 }, mark: { w: 22 }, ball: { w: 3 }, fount: { w: 3.6 } };
+const KINDS = { brush: { w: 8 }, pencil: { w: 2.4 }, mark: { w: 22 }, ball: { w: 3 }, fount: { w: 3.6 } };
 const L = { get(k) { try { return JSON.parse(localStorage.getItem('pabe:' + k)); } catch (e) { return null; } }, set(k, v) { try { localStorage.setItem('pabe:' + k, JSON.stringify(v)); } catch (e) {} } };
 
 let root, stage, world, ink, itemsEl, caret, toast, table;
 let cur = null, cam = { x: 0, y: 0, k: 1 }, sel = new Set(), hist = [], redo = [], lasso = false;
-let kind = ['brush', 'mark'].includes(L.get('kind')) ? L.get('kind') : 'brush', pen = L.get('pen') || 'ink', eraser = false, shapes = L.get('shapes') !== false;
+let kind = ['brush', 'pencil', 'mark'].includes(L.get('kind')) ? L.get('kind') : 'brush', pen = L.get('pen') || 'ink', eraser = false, shapes = L.get('shapes') !== false;
 // grosor propio de cada herramienta (0 fino, 1 medio, 2 grueso)
-const sizes = { brush: 1, mark: 1, ...(L.get('sizes') || { brush: L.get('size') ?? 1 }) };
+const sizes = { brush: 1, pencil: 1, mark: 1, ...(L.get('sizes') || { brush: L.get('size') ?? 1 }) };
 const curSize = () => sizes[kind] ?? 1;
 const urlCache = new Map();
 
@@ -39,6 +39,7 @@ const HTML = `
 <div class="nt-tabs" id="ntTabs"></div>
 <div class="nt-tools" id="ntTools" role="toolbar" aria-label="Herramientas">
  <button class="tl" data-k="brush" title="Pincel" aria-label="Pincel"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"><path d="M19.5 3.5c-3 1.6-7.4 6-9.3 9l2 2c3-2 7.4-6.4 9-9.3z"/><path d="M10.2 12.5c-2.2-.3-4 1.3-4 3.3 0 1.5-.8 2.6-2.2 3.2 3.6 1.5 8.2.4 8.2-3.4"/></svg></button>
+ <button class="tl" data-k="pencil" title="Lápiz de mina" aria-label="Lápiz de mina"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"><path d="M15.5 4.5l4 4L9 19l-5 1 1-5z"/><path d="M5 15l4 4"/><path d="M4.3 19.7l1.2-.3-.9-.9z" fill="currentColor"/></svg></button>
  <button class="tl" data-k="mark" title="Rotulador" aria-label="Rotulador"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"><path d="M9.5 15.5L5 20h4l2.5-2.5"/><path d="M8 13.5L16.5 4l3.5 3.5L10.5 16z"/></svg></button>
  <span class="sepr"></span><button class="sw" id="ntColor" title="Color y grosor" aria-label="Color y grosor"><b></b></button>
  <span class="sepr"></span>
@@ -67,6 +68,8 @@ const items = () => cur.doc.tabs[cur.tab];
 function isBlank() { return !cur.meta.title.trim() && !cur.meta.tags.length && Object.values(cur.doc.tabs).every(a => !a.length); }
 let saveT;
 function dirty() { clearTimeout(saveT); saveT = setTimeout(saveNow, 600); }
+// lo último que escribiste o tocaste (para volver ahí al abrir la nota)
+const markLast = id => { if (cur && id) cur.doc.last = { tab: cur.tab, id }; };
 // Título automático: el primer párrafo del primer cuadro de texto, salvo que lo hayas escrito tú a mano
 function autoTitle() {
   if (!cur || cur.meta.titleManual) return;
@@ -102,9 +105,23 @@ async function openNote(id, focus) {
     cur = { meta: clone(m), doc: clone(doc), saved: true, tab: m.tabs[0].id };
     hist = []; redo = []; sel = new Set(); hideMenu(); hideCaret(); resetCam();
   }
-  if (focus?.tab) cur.tab = focus.tab;
+  if (focus?.tab) cur.tab = focus.tab; else if (!focus && cur.doc.last?.tab && cur.doc.tabs[cur.doc.last.tab]) cur.tab = cur.doc.last.tab;
   renderNote(); closeLib(); setHash();
+  if (!focus?.item) focusLast();
   if (focus?.item) { const it = items().find(i => i.id === focus.item); if (it) { cam.k = 1; cam.x = stage.clientWidth / 2 - it.x - (it.w || 130) / 2; cam.y = stage.clientHeight / 2 - it.y - 40; applyCam(); sel = new Set([it.id]); markSel(); } }
+}
+
+// Al abrir una nota: la pantalla va a lo último escrito, con el zoom justo para que quepa el ancho de lo escrito
+function focusLast() {
+  const a = items(); if (!a.length || !stage.clientWidth) return;
+  const t = a.find(i => i.id === cur.doc.last?.id) || a[a.length - 1];
+  const all = unionBox(a.map(bboxOf)), tb = bboxOf(t), W = stage.clientWidth, H = stage.clientHeight;
+  const margin = Math.min(48, W * .05), k = Math.max(.25, Math.min(1.6, (W - 2 * margin) / Math.max(120, all.x2 - all.x1)));
+  cam.k = k; cam.x = (W - (all.x2 - all.x1) * k) / 2 - all.x1 * k;
+  const top = 76, bottom = H - 90;
+  if ((all.y2 - all.y1) * k <= bottom - top) cam.y = top - all.y1 * k; // cabe entera
+  else cam.y = Math.min(top - all.y1 * k, Math.max(bottom - all.y2 * k, top + (bottom - top) * .62 - tb.y2 * k)); // lo último, a dos tercios de la pantalla
+  applyCam();
 }
 
 /* =================== pintar nota =================== */
@@ -134,12 +151,23 @@ function brushD(p) {
   const Rr = Rt.slice().reverse(), he = Math.max(.2, p[(n - 1) * 3 + 2] / 2), hs = Math.max(.2, p[2] / 2);
   return `M${f(Lf[0][0])} ${f(Lf[0][1])}` + sm(Lf) + `A${f(he)} ${f(he)} 0 0 0 ${f(Rr[0][0])} ${f(Rr[0][1])}` + sm(Rr) + `A${f(hs)} ${f(hs)} 0 0 0 ${f(Lf[0][0])} ${f(Lf[0][1])}Z`;
 }
-const strokeD = s => s.v === 2 ? (s.k === 'brush' ? brushD(s.p) : outlineD(s.p)) : s.sh ? polyD(s.p, s.sh !== 'line') : pathD(s.p);
+const strokeD = s => s.v === 2 ? (s.k === 'brush' || s.k === 'pencil' ? brushD(s.p) : outlineD(s.p)) : s.sh ? polyD(s.p, s.sh !== 'line') : pathD(s.p);
 const penColor = c => c === 'ink' ? 'currentColor' : c;
+// Lápiz de mina: grafito (o el color elegido) más oscuro cuanto más se aprieta (s.o: 0 suave … 1 fuerte)
+function mixHex(h, f) { const n = parseInt(h.slice(1), 16), r = n >> 16, g = (n >> 8) & 255, b = n & 255, m = x => Math.round(255 - (255 - x) * f); return `rgb(${m(r)},${m(g)},${m(b)})`; }
+const pencilColor = s => mixHex(s.c === 'ink' ? '#262626' : s.c, .42 + .58 * (s.o ?? .7));
+// textura granulada del grafito (un solo filtro para todos los trazos de lápiz)
+function ensureGraphite() {
+  if (document.getElementById('ntGraphite')) return;
+  const d = document.createElement('div'); d.style.cssText = 'position:absolute;width:0;height:0;overflow:hidden';
+  d.innerHTML = '<svg width="0" height="0" aria-hidden="true"><filter id="ntGraphite" x="-5%" y="-5%" width="110%" height="110%"><feTurbulence type="fractalNoise" baseFrequency="1.35" numOctaves="2" seed="3" result="n"/><feColorMatrix in="n" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 -2.2 1.75" result="m"/><feComposite in="SourceGraphic" in2="m" operator="in"/></filter></svg>';
+  document.body.appendChild(d);
+}
 function mkPath(s) {
   const el = document.createElementNS('http://www.w3.org/2000/svg', 'path'), c = penColor(s.c); el.dataset.id = s.id;
   const a = s.v === 2 ? { fill: c, stroke: 'none' } : { fill: 'none', stroke: s.k === 'mark' && s.c === 'ink' ? '#FFC53D' : c, 'stroke-width': s.w, 'stroke-opacity': s.k === 'mark' ? .4 : 1 };
   if (s.k === 'mark') el.classList.add('mk');
+  if (s.k === 'pencil') { ensureGraphite(); a.fill = pencilColor(s); a.filter = 'url(#ntGraphite)'; }
   for (const k in a) el.setAttribute(k, a[k]); el.setAttribute('d', strokeD(s)); return el;
 }
 const size = b => b > 1e6 ? (b / 1e6).toFixed(1) + ' MB' : Math.max(1, Math.round(b / 1e3)) + ' KB';
@@ -335,7 +363,7 @@ function renderPng(list) {
     for (const { i, b, img, tsv } of prep) {
       if (i.t === 's') {
         const c = i.c === 'ink' ? INK : i.c, path = new Path2D(strokeD(i));
-        if (i.v === 2) { g.fillStyle = c; g.fill(path); }
+        if (i.v === 2) { g.fillStyle = i.k === 'pencil' ? pencilColor(i) : c; g.fill(path); }
         else { g.globalAlpha = i.k === 'mark' ? .4 : 1; g.strokeStyle = i.k === 'mark' && i.c === 'ink' ? '#FFC53D' : c; g.lineWidth = i.w; g.lineCap = 'round'; g.lineJoin = 'round'; g.stroke(path); g.globalAlpha = 1; }
       } else if (i.t === 'i' && img) { try { g.drawImage(img, b.x1, b.y1, b.x2 - b.x1, b.y2 - b.y1); } catch (_) {} }
       else if (i.t === 'x') { g.fillStyle = INK; g.font = `${TXT}px ${FONT}`; wrap(i.s, b.x1 + 4, b.y1 + 2 + TXT * .175, Math.max(40, b.x2 - b.x1 - 8), TXT * 1.35); }
@@ -486,7 +514,7 @@ const sizeRow = () => `<div class="pp-sz">${SIZES.map(([n], i) => `<button data-
 function toggleSizePop(btn) {
   const pop = $('#ntPenPop');
   if (!pop.hidden && pop.dataset.for === btn.dataset.k) { pop.hidden = true; return; }
-  pop.innerHTML = `<div class="pp-t">${btn.dataset.k === 'mark' ? 'Rotulador' : 'Pincel'} · grosor</div>${sizeRow()}`;
+  pop.innerHTML = `<div class="pp-t">${{ mark: 'Rotulador', pencil: 'Lápiz' }[btn.dataset.k] || 'Pincel'} · grosor</div>${sizeRow()}`;
   pop.hidden = false; pop.dataset.for = btn.dataset.k;
   const r = btn.getBoundingClientRect(), w = pop.offsetWidth, h = pop.offsetHeight;
   pop.style.left = Math.max(8, Math.min(innerWidth - w - 8, r.left + r.width / 2 - w / 2)) + 'px';
@@ -561,12 +589,23 @@ const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y), mid = (a, b) => ({ x: (
 function showCaret(w) { caretW = w; lastW = w; caret.hidden = false; caret.style.left = w.x + 'px'; caret.style.top = (w.y - 12 / cam.k) + 'px'; caret.style.height = (22 / cam.k) + 'px'; caret.style.width = Math.max(1, 1.6 / cam.k) + 'px'; }
 function hideCaret() { if (caret) caret.hidden = true; caretW = null; }
 function isDouble(e, id) { const now = performance.now(), t = lastTap; lastTap = { t: now, x: e.clientX, y: e.clientY, id }; if (t && now - t.t < 380 && Math.hypot(e.clientX - t.x, e.clientY - t.y) < 28 && t.id === id) { lastTap = null; return true; } return false; }
-const baseW = () => KINDS[kind].w * (SIZES[curSize()]?.[1] || 1) / cam.k;
+// Grosor fijo en la hoja, como en papel: con zoom o sin zoom, el mismo trazo mide lo mismo
+const baseW = () => KINDS[kind].w * (SIZES[curSize()]?.[1] || 1);
 // Ancho del pincel-rotulador: trazo lleno y parejo (como un rotulador) con un toque de pincel:
 // con el Pencil la presión lo engorda un poco; con dedo o ratón casi no cambia. Nunca se adelgaza tanto como para «cortarse».
 function bw(e, v) { const W = baseW(); if (e.pointerType === 'pen' && e.pressure > 0) return W * (.68 + .42 * Math.pow(Math.min(1, e.pressure), .7)) * Math.max(.9, 1 - v * .03); return W * Math.max(.88, Math.min(1.02, 1.04 - v * .08)); }
 function fw(e, v) { const pr = e.pointerType === 'pen' && e.pressure > 0 ? Math.min(1.3, Math.pow(e.pressure, .75) * 1.3) : Math.max(.3, Math.min(1.1, 1.15 - v * .45)); return baseW() * (.28 + 1.05 * pr); }
-function newStroke(w, e) { const s = { id: gid(), t: 's', k: kind, c: pen, w: rd2(baseW()) }; if (kind === 'brush') { s.v = 2; s.p = [rd(w.x), rd(w.y), rd2(bw(e, 0) * .95)]; } else s.p = [rd(w.x), rd(w.y)]; return s; }
+// Lápiz: fino y parejo; si inclinas el Pencil, la mina se apoya de lado y el trazo engorda (para sombrear)
+// presión media del trazo → oscuridad del grafito (apretar = más oscuro)
+const pressDark = a => { const m = a.reduce((x, y) => x + y, 0) / (a.length || 1); return rd2(Math.max(.15, Math.min(1, (m - .1) / .7))); };
+function tiltOf(e) {
+  if (e.pointerType !== 'pen') return 0;
+  let alt = e.altitudeAngle; if (alt == null) { const tx = Math.tan((e.tiltX || 0) * Math.PI / 180), ty = Math.tan((e.tiltY || 0) * Math.PI / 180); alt = Math.atan(1 / (Math.hypot(tx, ty) || 1e-6)); }
+  return Math.max(0, Math.min(1, 1 - alt / (Math.PI / 2)));
+}
+function pw(e) { const W = baseW(), pr = e.pointerType === 'pen' && e.pressure > 0 ? Math.min(1, e.pressure) : .5, t = tiltOf(e); return W * (.85 + .3 * pr) * (1 + 5 * Math.pow(Math.max(0, t - .38) / .62, 1.3)); }
+function newStroke(w, e) { const s = { id: gid(), t: 's', k: kind, c: pen, w: rd2(baseW()) }; if (kind === 'brush') { s.v = 2; s.p = [rd(w.x), rd(w.y), rd2(bw(e, 0) * .95)]; }
+  else if (kind === 'pencil') { s.v = 2; s.p = [rd(w.x), rd(w.y), rd2(pw(e))]; s.prs = [e.pointerType === 'pen' && e.pressure > 0 ? e.pressure : .6]; s.o = .7; ensureGraphite(); } else s.p = [rd(w.x), rd(w.y)]; return s; }
 function cancelAct() { if (act && act.k === 'draw') { cur.doc.tabs[cur.tab] = items().filter(i => i !== act.s); act.el.remove(); hist.pop(); } act = null; }
 function tapAt(e) { const w = toW(e); if (e.pointerType === 'touch') { addText(w); return; } if (isDouble(e, 'bg')) addText(w); else showCaret(w); }
 
@@ -659,11 +698,12 @@ function onMove(e) {
       const w = toW(ev); act.raw = { x: rd(w.x), y: rd(w.y) };
       act.v = act.v == null ? v : act.v * .6 + v * .4;
       // estabilizador suave: quita el temblor sin que el trazo vaya por detrás
-      if (act.s.k === 'brush') { const lx = p[p.length - 3], ly = p[p.length - 2], k = .82; w.x = lx + (w.x - lx) * k; w.y = ly + (w.y - ly) * k; }
-      if (act.s.v === 2) { const pw = p[p.length - 1], nw = act.s.k === 'brush' ? bw(ev, act.v) : fw(ev, v); p.push(rd(w.x), rd(w.y), rd2(act.s.k === 'brush' ? pw * .75 + nw * .25 : pw * .6 + nw * .4)); } else p.push(rd(w.x), rd(w.y));
+      if (act.s.k === 'brush' || act.s.k === 'pencil') { const lx = p[p.length - 3], ly = p[p.length - 2], k = .82; w.x = lx + (w.x - lx) * k; w.y = ly + (w.y - ly) * k; }
+      if (act.s.v === 2) { const pw0 = p[p.length - 1], nw = act.s.k === 'brush' ? bw(ev, act.v) : act.s.k === 'pencil' ? pw(ev) : fw(ev, v); p.push(rd(w.x), rd(w.y), rd2(act.s.k === 'brush' || act.s.k === 'pencil' ? pw0 * .75 + nw * .25 : pw0 * .6 + nw * .4)); if (act.s.prs && ev.pointerType === 'pen' && ev.pressure > 0) act.s.prs.push(ev.pressure); } else p.push(rd(w.x), rd(w.y));
     }
     // el trazo en pantalla llega justo hasta la punta del lápiz (sin dibujar por delante: así no «se encoge» al levantar)
-    if (act.s.k === 'brush' && act.raw) { const q = { ...act.s, p: p.slice() }; q.p.push(act.raw.x, act.raw.y, p[p.length - 1]); act.el.setAttribute('d', strokeD(q)); }
+    if (act.s.prs && act.s.prs.length % 6 === 0) { act.s.o = pressDark(act.s.prs); act.el.setAttribute('fill', pencilColor(act.s)); }
+    if ((act.s.k === 'brush' || act.s.k === 'pencil') && act.raw) { const q = { ...act.s, p: p.slice() }; q.p.push(act.raw.x, act.raw.y, p[p.length - 1]); act.el.setAttribute('d', strokeD(q)); }
     else act.el.setAttribute('d', strokeD(act.s));
     return;
   }
@@ -681,7 +721,7 @@ function onUp(e) {
   act = null; const ok = e.type === 'pointerup';
   if (a.k === 'lasso') { a.el.remove(); if (ok && a.P.length >= 6) lassoSelect(a.P); else { lasso = false; syncTools(); } return; }
   if (a.k === 'movesel') { if (a.moved && ok) { selItems().forEach(i => shiftItem(i, a.dx, a.dy)); renderItems(); dirty(); showMenu('sel'); } else if (a.moved) renderItems(); else if (ok) { if (menuFor === 'sel') hideMenu(); else showMenu('sel'); } return; }
-  if (a.k === 'draw') { if (!a.isPen && a.moved < 4) { cur.doc.tabs[cur.tab] = items().filter(i => i !== a.s); a.el.remove(); hist.pop(); if (ok) tapAt(e); return; } act0v = a.v; if (a.s.k === 'brush') { const p = a.s.p, end = toW(e), last = a.raw && Math.hypot(end.x - a.raw.x, end.y - a.raw.y) * cam.k < 40 ? end : a.raw; if (last) p.push(rd(last.x), rd(last.y), p[p.length - 1]); } finishStroke(a.s, a.el); dirty(); return; }
+  if (a.k === 'draw') { if (!a.isPen && a.moved < 4) { cur.doc.tabs[cur.tab] = items().filter(i => i !== a.s); a.el.remove(); hist.pop(); if (ok) tapAt(e); return; } act0v = a.v; if (a.s.k === 'brush' || a.s.k === 'pencil') { const p = a.s.p, end = toW(e), last = a.raw && Math.hypot(end.x - a.raw.x, end.y - a.raw.y) * cam.k < 40 ? end : a.raw; if (last) p.push(rd(last.x), rd(last.y), p[p.length - 1]); } finishStroke(a.s, a.el); dirty(); return; }
   if (a.k === 'pan' && a.tbl) return; // un toque en la tabla lo atiende la propia tabla
   if (a.k === 'pan' && a.tap && ok) { tapAt(e); return; }
   if (a.k === 'move') { if (a.moved) { dirty(); drawSelBox(); } else if (ok && a.it.t === 'x' && sel.size <= 1) editAt(a.el, e); else if (ok) showMenu('sel'); return; }
@@ -747,8 +787,10 @@ function scribbleErase(s) {
   flash('Borrado · Ctrl+Z o ↶ para recuperarlo'); return true;
 }
 function finishStroke(s, el) {
-  if (s.k === 'brush' && scribbleErase(s)) { el.remove(); return; }
-  if (s.v === 2 && s.k === 'brush') { /* puntas redondas, sin cola fina: no se «corta» al final */ }
+  markLast(s.id);
+  if (s.prs) { s.o = pressDark(s.prs); delete s.prs; el.setAttribute('fill', pencilColor(s)); }
+  if ((s.k === 'brush' || s.k === 'pencil') && scribbleErase(s)) { el.remove(); return; }
+  if (s.v === 2 && (s.k === 'brush' || s.k === 'pencil')) { /* puntas redondas, sin cola fina: no se «corta» al final */ }
   else if (s.v === 2) { const p = s.p, n = p.length / 3;[.45, .6, .75, .9].forEach((f, j) => { if (j < n - 1) p[(n - 1 - j) * 3 + 2] = rd2(p[(n - 1 - j) * 3 + 2] * f); }); }
   if (shapes && s.k !== 'mark') { const sh = detect(s); if (sh) { hist.push(JSON.stringify(items())); delete s.v; Object.assign(s, sh); } }
   el.replaceWith(mkPath(s));
@@ -760,7 +802,7 @@ function detect(s) {
   if (diag * cam.k < 56) return null;
   let len = 0; for (let i = 1; i < n; i++) len += Math.hypot(X[i] - X[i - 1], Y[i] - Y[i - 1]);
   const chord = Math.hypot(X[n - 1] - X[0], Y[n - 1] - Y[0]);
-  const base = { k: 'ball', w: rd2(st === 3 ? Math.max(ws / n * .9, KINDS.ball.w / cam.k) : s.w) };
+  const base = { k: 'ball', w: rd2(st === 3 ? Math.max(ws / n * .9, KINDS.ball.w) : s.w) };
   if (chord / len > .94) { let md = 0; const ux = (X[n - 1] - X[0]) / chord, uy = (Y[n - 1] - Y[0]) / chord; for (let i = 0; i < n; i++) md = Math.max(md, Math.abs((X[i] - X[0]) * uy - (Y[i] - Y[0]) * ux)); if (md < chord * .05) return { ...base, sh: 'line', p: [X[0], Y[0], X[n - 1], Y[n - 1]] }; }
   if (chord < diag * .25 && len > diag * 1.5 && Math.min(W, H) > Math.max(W, H) * .12) {
     const cx = (mnx + mxx) / 2, cy = (mny + mxy) / 2, rx = W / 2, ry = H / 2; let ee = 0, re = 0;
@@ -953,7 +995,7 @@ export async function mount(el, opts = {}) {
   });
   stage.addEventListener('click', e => { const o = e.target.closest('[data-fopen]'), d = e.target.closest('[data-fdrive]'), x = e.target.closest('[data-fembed]'); if (o || d || x) { const it = items().find(i => i.id === e.target.closest('.it').dataset.id); if (it) x ? embedFileItem(it) : openFile(it.f, !!d); } });
 
-  itemsEl.addEventListener('input', e => { const el = e.target.closest('.tx'); if (!el) return; const it = items().find(i => i.id === el.dataset.id); if (it) { it.s = el.innerText.replace(/\n$/, ''); autoTitle(); dirty(); keepCaret(); } });
+  itemsEl.addEventListener('input', e => { const el = e.target.closest('.tx'); if (!el) return; const it = items().find(i => i.id === el.dataset.id); if (it) { it.s = el.innerText.replace(/\n$/, ''); markLast(it.id); autoTitle(); dirty(); keepCaret(); } });
   window.visualViewport?.addEventListener('resize', () => { if (editing()) keepCaret(); }); // al abrirse el teclado
   itemsEl.addEventListener('focusout', e => { const el = e.target.closest('.tx'); if (!el) return; el.contentEditable = 'false'; el.classList.remove('editing'); const it = items().find(i => i.id === el.dataset.id); if (it && !it.s.trim()) { cur.doc.tabs[cur.tab] = items().filter(i => i !== it); hist.pop(); renderItems(); dirty(); } });
   itemsEl.addEventListener('keydown', e => {
@@ -970,7 +1012,7 @@ export async function mount(el, opts = {}) {
   $('#ntPenPop').addEventListener('click', e => {
     const b = e.target.closest('button'); if (!b) return;
     if (b.dataset.pc) { pen = b.dataset.pc; L.set('pen', pen); $('#ntPenPop').hidden = true; }
-    if (b.dataset.ps) { const k = $('#ntPenPop').dataset.for; if (k === 'brush' || k === 'mark') kind = k; sizes[kind] = +b.dataset.ps; L.set('sizes', sizes); L.set('kind', kind); lasso = false; $('#ntPenPop').hidden = true; }
+    if (b.dataset.ps) { const k = $('#ntPenPop').dataset.for; if (k === 'brush' || k === 'pencil' || k === 'mark') kind = k; sizes[kind] = +b.dataset.ps; L.set('sizes', sizes); L.set('kind', kind); lasso = false; $('#ntPenPop').hidden = true; }
     eraser = false; syncTools();
   });
   document.addEventListener('pointerdown', e => { const p = $('#ntPenPop'); if (p && !p.hidden && !e.target.closest('#ntPenPop,#ntColor,[data-k]')) p.hidden = true; }, true);
