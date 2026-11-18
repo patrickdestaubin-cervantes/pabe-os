@@ -81,9 +81,9 @@
 .cal-del{color:#e5484d;font-size:13px;height:34px;padding:0 10px;border-radius:8px}.cal-del:hover,.cal-del.sure{background:color-mix(in srgb,#e5484d 12%,transparent)}
 .cal-lnk{font-size:13px;color:var(--mut)}
 
-@media (max-width:900px){.cal-top{padding-right:clamp(14px,2.4vw,28px);padding-top:calc(66px + env(safe-area-inset-top))}}
+@media (max-width:900px){.cal-top{padding-right:64px;padding-top:calc(66px + env(safe-area-inset-top))}}
 @media (max-width:600px){
- .cal-nav h2{font-size:18px}.cal-tools{width:100%}.cal-seg{flex:1 1 100%}.cal-seg button,.cal-seg a{flex:1;padding:0 4px}.cal-tools .cal-b{flex:1}
+ .cal-nav{max-width:100%;min-width:0}.cal-nav h2{font-size:18px;overflow:hidden;text-overflow:ellipsis}.cal-tools{width:100%}.cal-seg{flex:1 1 100%}.cal-seg button,.cal-seg a{flex:1;padding:0 4px}.cal-tools .cal-b{flex:1}
  .cal-ghead,.cal-gall,.cal-gbody{grid-template-columns:40px repeat(var(--n),1fr)}.cal-h span{width:36px}
  .cal-dh b{font-size:16px;width:28px;height:28px}
  .cal-mc{padding:2px}.cal-ev{font-size:11px;padding:0 3px}.cal-ev i{display:none}

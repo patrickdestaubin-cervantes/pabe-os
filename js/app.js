@@ -73,6 +73,14 @@ async function boot() {
   // «+»: en Calendario crea un evento; en el resto, una nota nueva (clic derecho → abrirlo en otra pestaña)
   $('#plus').onclick = e => { if (!plainClick(e)) return; e.preventDefault(); if (current === 'calendario') return calendario.newEvent(); if (current !== 'notas') go('notas'); else notas.enter(); };
   addEventListener('hashchange', fromHash);
+  // ⟳ bajo el «+»: guarda lo que haya pendiente, busca la última versión de PABE y recarga esta pestaña (se queda en el mismo sitio)
+  $('#reload').onclick = async () => {
+    const b = $('#reload'); b.classList.add('spin');
+    try { MODS[current]?.mod?.leave?.(); } catch (_) {}
+    try { syncNow(); } catch (_) {}
+    try { const r = await navigator.serviceWorker?.getRegistration(); await Promise.race([r?.update(), new Promise(ok => setTimeout(ok, 1500))]); } catch (_) {}
+    setTimeout(() => location.reload(), 300);
+  };
   notas.setActiveCheck(() => current === 'notas');
   await notas.mount(document.querySelector('[data-view=notas]'));
   await finanzas.mount(document.querySelector('[data-view=finanzas]'));
