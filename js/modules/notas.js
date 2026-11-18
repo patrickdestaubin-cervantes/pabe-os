@@ -263,7 +263,7 @@ function showMenu(kind, pt) {
     if (one?.t === 'xl') b.push(['xlsx', 'Descargar Excel']);
     if (list.length < items().length) b.push(['all', 'Todo']);
     b.push(['del', 'Eliminar']);
-  } else b.push(['paste', 'Pegar'], ['pastesheet', 'Pegar como hoja'], ['lasso', 'Seleccionar'], ['all', 'Seleccionar todo']);
+  } else b.push(['paste', 'Pegar'], ['pastesheet', 'Pegar como hoja'], ['lasso', 'Seleccionar'], ['all', 'Seleccionar todo'], ['gap', 'Mover lo de abajo']);
   m.innerHTML = b.map(([k, t]) => `<button data-mn="${k}" role="menuitem"${k === 'del' ? ' class="dng"' : ''}>${t}</button>`).join('');
   m.hidden = false; placeMenu();
 }
@@ -291,6 +291,7 @@ function menuAction(k) {
   if (k === 'xlsx') downloadXlsx(selItems()[0]);
   if (k === 'paste') pasteSystem(w || caretW || lastW || centerW());
   if (k === 'pastesheet') pasteSystem(w || caretW || lastW || centerW(), 'sheet');
+  if (k === 'gap' && w) { gapArmed = w.y; const l = gapLine(); l.hidden = false; l.style.top = cam.y + w.y * cam.k + 'px'; flash('Arrastra hacia abajo para abrir espacio, o hacia arriba para cerrarlo'); return; }
   if (k === 'lasso') { lasso = true; eraser = false; sel = new Set(); markSel(); syncTools(); flash('Rodea con el dedo o el lápiz lo que quieras seleccionar'); }
 }
 
@@ -604,14 +605,16 @@ function onDown(e) {
     if (!sawPen) { sawPen = true; L.set('sawPen', true); }
     penDown = true;
     for (const [id, q] of ptrs) if (q.t === 'touch') ptrs.delete(id);
+    if (act?.k === 'gap') endGap(false);
     if (act && act.touch) { clearTimeout(lpT); if (act.k === 'draw') cancelAct(); else { if (act.k === 'lasso') act.el.remove(); if (act.k === 'movesel') renderItems(); if (act.cam) { cam = { ...act.cam }; applyCam(); } act = null; } }
   }
   if (isTouch && (penDown || performance.now() - penUpAt < 500 || (sawPen && ((e.width || 0) > 50 || (e.height || 0) > 50)))) return;
   try { stage.setPointerCapture(e.pointerId); } catch (_) {}
   ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY, t: e.pointerType });
-  if (ptrs.size === 2) { clearTimeout(lpT); if (act?.k === 'lasso') act.el.remove(); if (act?.k === 'movesel') { renderItems(); } cancelAct(); hideCaret(); const [a, b] = [...ptrs.values()]; act = { k: 'pinch', d: dist(a, b) || 1, m: mid(a, b), cam: { ...cam }, touch: true }; return; }
-  if (ptrs.size > 2 || e.button === 2) return;
+  if (ptrs.size === 2) { clearTimeout(lpT); if (act?.k === 'lasso') act.el.remove(); if (act?.k === 'movesel') { renderItems(); } cancelAct(); hideCaret(); const [a, b] = [...ptrs.values()]; act = { k: 'pinch', d: dist(a, b) || 1, m: mid(a, b), cam: { ...cam }, touch: true }; armGap(); return; }
+  if (ptrs.size > 2 || e.button === 2) { if (ptrs.size > 2) clearTimeout(gapT); return; }
   const w = toW(e), itEl = e.target.closest('.it');
+  if (gapArmed != null) { const r = stage.getBoundingClientRect(); startGap(gapArmed, r.top + cam.y + gapArmed * cam.k, e.clientY); gapArmed = null; return; }
   if (e.button === 1 || space) { act = { k: 'pan', sx: e.clientX, sy: e.clientY, cam: { ...cam } }; stage.classList.add('panning'); return; }
   // Lazo: rodear para seleccionar (con dedo, ratón o lápiz)
   if (lasso) { hideCaret(); sel = new Set(); markSel(); const el = document.createElementNS('http://www.w3.org/2000/svg', 'path'); el.setAttribute('class', 'nt-lasso'); ink.appendChild(el); act = { k: 'lasso', P: [rd(w.x), rd(w.y)], el, touch: isTouch }; return; }
@@ -643,6 +646,8 @@ function onMove(e) {
     selItems().forEach(i => { if (i.t === 's') ink.querySelector(`[data-id="${i.id}"]`)?.setAttribute('transform', `translate(${dx} ${dy})`); else { const el = itemsEl.querySelector(`[data-id="${i.id}"]`); if (el) { el.style.left = i.x + dx + 'px'; el.style.top = i.y + dy + 'px'; } } });
     $('.nt-selbox', root).style.transform = `translate(${dx}px,${dy}px)`; return;
   }
+  if (act.k === 'gap') { moveGap(); return; }
+  if (act.k === 'pinch' && gapT) { const [a, b] = [...ptrs.values()]; if (a && b && (Math.abs(dist(a, b) - act.d) > 14 || dist(mid(a, b), act.m) > 14)) { clearTimeout(gapT); gapT = null; } }
   if (act.k === 'pinch') { if (ptrs.size < 2) return; const [a, b] = [...ptrs.values()], r = stage.getBoundingClientRect(), m = mid(a, b), k = Math.min(6, Math.max(.1, act.cam.k * dist(a, b) / act.d)); const wx = (act.m.x - r.left - act.cam.x) / act.cam.k, wy = (act.m.y - r.top - act.cam.y) / act.cam.k; cam.k = k; cam.x = m.x - r.left - wx * k; cam.y = m.y - r.top - wy * k; applyCam(); return; }
   if (act.k === 'pan') { const dx = e.clientX - act.sx, dy = e.clientY - act.sy; if (act.tbl && act.tap && Math.hypot(dx, dy) < 10) return; if (Math.hypot(dx, dy) > 6) act.tap = false; cam.x = act.cam.x + dx; cam.y = act.cam.y + dy; applyCam(); return; }
   if (act.k === 'draw') {
@@ -671,7 +676,8 @@ function onUp(e) {
   clearTimeout(lpT); lpT = null;
   if (!ptrs.has(e.pointerId)) return;
   ptrs.delete(e.pointerId); stage.classList.remove('panning'); if (!act) return;
-  const a = act; if (a.k === 'pinch') { if (!ptrs.size) act = null; return; }
+  const a = act; if (a.k === 'gap') { if (!ptrs.size) endGap(e.type === 'pointerup'); return; }
+  if (a.k === 'pinch') { clearTimeout(gapT); gapT = null; if (!ptrs.size) act = null; return; }
   act = null; const ok = e.type === 'pointerup';
   if (a.k === 'lasso') { a.el.remove(); if (ok && a.P.length >= 6) lassoSelect(a.P); else { lasso = false; syncTools(); } return; }
   if (a.k === 'movesel') { if (a.moved && ok) { selItems().forEach(i => shiftItem(i, a.dx, a.dy)); renderItems(); dirty(); showMenu('sel'); } else if (a.moved) renderItems(); else if (ok) { if (menuFor === 'sel') hideMenu(); else showMenu('sel'); } return; }
@@ -683,6 +689,39 @@ function onUp(e) {
   if (a.k === 'erase') { if (a.hit) dirty(); else hist.pop(); }
 }
 let act0v = 0;
+/* ---------- abrir o cerrar espacio (como en Nebo) ----------
+   Dos dedos quietos sobre la hoja ~medio segundo → aparece una línea horizontal; al arrastrar hacia abajo o arriba
+   se mueve todo lo que hay debajo de la línea. Con ratón: clic derecho → «Mover lo de abajo» y arrastrar. */
+let gapT = null, gapArmed = null;
+function armGap() {
+  clearTimeout(gapT);
+  gapT = setTimeout(() => {
+    gapT = null; if (!act || act.k !== 'pinch' || ptrs.size !== 2) return;
+    cam = { ...act.cam }; applyCam(); const [a, b] = [...ptrs.values()];
+    const m = mid(a, b); navigator.vibrate?.(12); startGap(toW({ clientX: m.x, clientY: m.y }).y, m.y, m.y);
+  }, 480);
+}
+function gapLine() { let l = $('.nt-gapline', root); if (!l) { l = document.createElement('div'); l.className = 'nt-gapline'; l.innerHTML = '<i>↕</i>'; stage.appendChild(l); } return l; }
+function startGap(wy, sy, y0) {
+  hideMenu(); hideCaret(); sel = new Set(); markSel();
+  const list = items().filter(i => { const b = bboxOf(i); return (b.y1 + b.y2) / 2 >= wy; });
+  act = { k: 'gap', wy, sy, y0, dy: 0, list, moved: false, touch: true };
+  const l = gapLine(); l.hidden = false; l.style.top = sy - stage.getBoundingClientRect().top + 'px';
+}
+function moveGap() {
+  const P = [...ptrs.values()]; if (!P.length) return;
+  const y = P.reduce((a, q) => a + q.y, 0) / P.length; if (act.y0 == null) act.y0 = y;
+  const dy = (y - act.y0) / cam.k; if (!act.moved && Math.abs(dy) * cam.k < 3) return;
+  if (!act.moved) { snap(); act.moved = true; } act.dy = dy;
+  act.list.forEach(i => { if (i.t === 's') ink.querySelector(`[data-id="${i.id}"]`)?.setAttribute('transform', `translate(0 ${dy})`); else { const el = itemsEl.querySelector(`[data-id="${i.id}"]`); if (el) el.style.top = i.y + dy + 'px'; } });
+  gapLine().style.top = act.sy + (y - act.y0) - stage.getBoundingClientRect().top + 'px';
+}
+function endGap(ok) {
+  const a = act; act = null; const l = $('.nt-gapline', root); if (l) l.hidden = true;
+  if (!a) return;
+  if (a.moved && ok && Math.abs(a.dy) > .5) { a.list.forEach(i => shiftItem(i, 0, a.dy)); renderItems(); dirty(); flash(a.dy > 0 ? 'Espacio abierto' : 'Espacio cerrado'); }
+  else if (a.moved) { hist.pop(); renderItems(); }
+}
 // Rayar para borrar (como en Nebo): un garabato de ida y vuelta encima de lo escrito lo borra.
 // Si debajo no hay nada, el garabato se queda como dibujo normal. Ctrl+Z lo recupera.
 function scribbleErase(s) {
@@ -1000,7 +1039,7 @@ export async function mount(el, opts = {}) {
     if (!active()) return;
     if (e.key === ' ' && !editing() && !e.target.closest('input') && !caretW) space = true;
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); $('#ntLibPanel').hidden ? openLib() : closeLib(); return; }
-    if (e.key === 'Escape') { hideCaret(); eraser = false; syncTools(); if (!$('#ntTagPop').hidden) { $('#ntTagPop').hidden = true; return; } if (!$('#ntLibPanel').hidden) { closeLib(); return; } if (editing()) document.activeElement.blur(); if (lasso) { lasso = false; syncTools(); } sel = new Set(); markSel(); hideMenu(); return; }
+    if (e.key === 'Escape') { if (gapArmed != null) { gapArmed = null; const l = $('.nt-gapline', root); if (l) l.hidden = true; } hideCaret(); eraser = false; syncTools(); if (!$('#ntTagPop').hidden) { $('#ntTagPop').hidden = true; return; } if (!$('#ntLibPanel').hidden) { closeLib(); return; } if (editing()) document.activeElement.blur(); if (lasso) { lasso = false; syncTools(); } sel = new Set(); markSel(); hideMenu(); return; }
     if (!$('#ntLibPanel').hidden || editing() || e.target.closest('input,textarea,select,[contenteditable=true],[contenteditable=plaintext-only],.tbl,.xl')) return;
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') { e.preventDefault(); selectAll(); return; }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'd' && sel.size) { e.preventDefault(); dupSel(); return; }
