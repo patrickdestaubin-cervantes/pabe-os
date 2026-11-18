@@ -419,3 +419,17 @@ path.mk{mix-blend-mode:multiply}@media (prefers-color-scheme:dark){path.mk{mix-b
 @media (max-width:600px){.mod .bdg{right:-2px}.dia-it{padding:12px 12px;gap:12px}}
 .nt-copytx{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(78px + env(safe-area-inset-bottom));z-index:60;display:flex;align-items:center;gap:10px;max-width:min(520px,calc(100vw - 32px));padding:10px 14px;border-radius:12px;background:var(--ink);color:var(--bg);box-shadow:var(--shadow);font-size:14px}
 .nt-copytx span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;opacity:.8}.nt-copytx em{font-style:normal;font-weight:600;color:#7cb7ff}
+.pdf{background:transparent;cursor:auto}
+.pdf-h{height:40px;display:flex;align-items:center;gap:6px;padding:0 4px;cursor:grab;touch-action:none}
+.pdf-grip{color:var(--mut);font-size:13px;letter-spacing:-2px;padding:0 4px}
+.pdf-badge{background:#c4302b}
+.pdf-n{flex:1;min-width:0;font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pdf-b{height:28px;padding:0 10px;border-radius:7px;border:1px solid var(--line);background:var(--bg);font-size:12px;color:var(--ink);white-space:nowrap;flex:none}.pdf-b:hover{background:var(--soft)}
+.pdf-pages{display:flex;flex-direction:column;gap:10px}
+.pdf-pg{background:#fff;box-shadow:0 0 0 1px rgba(0,0,0,.06),0 2px 8px rgba(0,0,0,.06);position:relative}
+.pdf-pg canvas{position:absolute;inset:0;width:100%;height:100%}
+.pdf-msg{padding:24px;color:var(--mut);font-size:13px;border:1px dashed var(--line);border-radius:8px}
+.nt-pager{position:absolute;left:50%;transform:translateX(-50%);bottom:calc(74px + env(safe-area-inset-bottom));z-index:30;display:flex;align-items:center;gap:4px;padding:4px;border-radius:12px;background:var(--pop);border:1px solid var(--line);box-shadow:var(--shadow);font-size:13px}
+.nt-pager button{width:38px;height:36px;border-radius:9px;font-size:20px;color:var(--ink)}.nt-pager button:hover{background:var(--soft)}.nt-pager button[data-pg=x]{font-size:14px;color:var(--mut)}
+.nt-pager span{padding:0 8px;white-space:nowrap}
+@media (max-width:600px){.pdf-b[data-pa=pager]{font-size:0;width:34px;padding:0}.pdf-b[data-pa=pager]::before{content:'⇄';font-size:15px}.pdf-b[data-pa=save]{font-size:0;width:34px;padding:0}.pdf-b[data-pa=save]::before{content:'⤓';font-size:15px}}
