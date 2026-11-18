@@ -7,6 +7,7 @@ import * as notas from './modules/notas.js';
 import * as finanzas from './modules/finanzas.js';
 import * as calendario from './modules/calendario.js';
 import { agente, mountAgent, pullSettings } from './agente.js';
+import { plainClick } from './ui.js';
 
 const $ = s => document.querySelector(s);
 // Módulos de PABE. «mod»: módulo ya integrado en esta web. «url»: módulo que aún vive en su propia web de pruebas.
@@ -25,16 +26,23 @@ function paintModulo(m) {
 }
 let current = null;
 
-function go(m, keep) {
+// Rutas con dirección propia (#módulo/subruta): así cualquier botón se puede abrir en otra pestaña
+// (clic derecho → «Abrir en pestaña nueva», Ctrl/⌘+clic o clic con la rueda). Ej.: #notas/nueva, #notas/<id>, #calendario/semana, #finanzas/ctas
+const PLUS = { calendario: ['#calendario/nuevo', 'Evento nuevo'] };
+function go(m, keep, sub) {
   if (!MODS[m]) m = 'notas';
   if (current && current !== m) MODS[current].mod?.leave?.();
   const entering = current !== m; current = m;
   document.querySelectorAll('.mod').forEach(b => b.classList.toggle('on', b.dataset.m === m));
   document.querySelectorAll('.view').forEach(v => { v.hidden = v.dataset.view !== (MODS[m].mod ? m : 'soon'); });
   if (!MODS[m].mod) paintModulo(MODS[m]);
-  if (location.hash !== '#' + m) history.replaceState(null, '', '#' + m);
-  if (entering && !keep) MODS[m].mod?.enter?.();
+  const [href, label] = PLUS[m] || ['#notas/nueva', 'Nota nueva']; const pl = $('#plus'); pl.href = href; pl.title = label; pl.setAttribute('aria-label', label);
+  if (entering && !keep && !(m === 'notas' && sub && sub !== 'todas')) MODS[m].mod?.enter?.();
+  if (sub) MODS[m].mod?.route?.(sub);
+  const h = location.hash.slice(1), base = h.split('/')[0];
+  if (base !== m || (sub && ['nueva', 'nuevo'].includes(sub))) history.replaceState(null, '', '#' + m + (sub && !['nueva', 'nuevo', 'todas'].includes(sub) ? '/' + sub : ''));
 }
+const fromHash = () => { const [m, ...r] = location.hash.slice(1).split('/'); go(m || 'notas', false, r.join('/') || null); };
 
 /* ---------- estado de la sincronía (punto + botón) ---------- */
 const needLogin = () => !supa.signedIn || drive.missing;
@@ -61,10 +69,10 @@ async function boot() {
   const login = await supa.handleRedirect();
   if (login?.error) toast('No se pudo iniciar sesión: ' + login.error);
   else if (login?.google) drive.use(login.google, login.expires_in, CONFIG.scope);
-  $('#rail').addEventListener('click', e => { const b = e.target.closest('.mod'); if (b) go(b.dataset.m); });
-  // «+»: en Calendario crea un evento; en el resto, una nota nueva
-  $('#plus').onclick = () => { if (current === 'calendario') return calendario.newEvent(); if (current !== 'notas') go('notas'); else notas.enter(); };
-  addEventListener('hashchange', () => go(location.hash.slice(1)));
+  $('#rail').addEventListener('click', e => { const b = e.target.closest('.mod'); if (!b || !plainClick(e)) return; e.preventDefault(); go(b.dataset.m); });
+  // «+»: en Calendario crea un evento; en el resto, una nota nueva (clic derecho → abrirlo en otra pestaña)
+  $('#plus').onclick = e => { if (!plainClick(e)) return; e.preventDefault(); if (current === 'calendario') return calendario.newEvent(); if (current !== 'notas') go('notas'); else notas.enter(); };
+  addEventListener('hashchange', fromHash);
   notas.setActiveCheck(() => current === 'notas');
   await notas.mount(document.querySelector('[data-view=notas]'));
   await finanzas.mount(document.querySelector('[data-view=finanzas]'));
@@ -72,7 +80,7 @@ async function boot() {
   agente.register('finanzas', finanzas.agentDef);
   agente.register('calendario', calendario.agentDef);
   agente.register('notas', notas.agentDef); agente.setCurrent(() => current || 'notas'); mountAgent();
-  go(location.hash.slice(1) || 'notas');
+  fromHash();
 
   on('sync', paintSync); supa.onAuth(paintSync);
   drive.onAuth(ok => { paintSync(); if (ok) pullSettings(); });

@@ -1,3 +1,4 @@
+import { plainClick } from '../ui.js';
 // Módulo Calendario: tu Google Calendar dentro de PABE (día, semana, mes y Tabla PABE). Lo que cambies aquí se guarda en Google Calendar y al revés.
 // Las propiedades propias de PABE (etiquetas, columnas nuevas) se guardan en el Drive: 06 PABE OS/Calendario/_datos2.
 import { gcal } from '../gcal.js';
@@ -156,7 +157,7 @@ const HTML = `
  <header class="cal-top">
   <div class="cal-nav"><button class="cal-b" data-a="today">Hoy</button><button class="cal-i" data-a="prev" aria-label="Anterior">‹</button><button class="cal-i" data-a="next" aria-label="Siguiente">›</button><h2 id="calTitle"></h2></div>
   <div class="cal-tools">
-   <div class="cal-seg" role="tablist">${[['dia', 'Día'], ['semana', 'Semana'], ['mes', 'Mes'], ['tabla', 'Tabla']].map(v => `<button data-v="${v[0]}" role="tab">${v[1]}</button>`).join('')}</div>
+   <div class="cal-seg" role="tablist">${[['dia', 'Día'], ['semana', 'Semana'], ['mes', 'Mes'], ['tabla', 'Tabla']].map(v => `<a data-v="${v[0]}" href="#calendario/${v[0]}" role="tab">${v[1]}</a>`).join('')}</div>
    <button class="cal-b" id="calCals" aria-label="Calendarios">Calendarios ▾</button>
    <button class="cal-conn" id="calConn"></button>
   </div>
@@ -179,7 +180,7 @@ function paintState() {
 function render() {
   if (!root) return;
   paintState();
-  root.querySelectorAll('.cal-seg button').forEach(b => b.classList.toggle('on', b.dataset.v === view));
+  root.querySelectorAll('.cal-seg [data-v]').forEach(b => b.classList.toggle('on', b.dataset.v === view));
   const isT = view === 'tabla';
   $('#calBody', root).hidden = isT; $('#calTbl', root).hidden = !isT;
   $('.cal-nav', root).classList.toggle('dim', isT);
@@ -384,7 +385,7 @@ export async function mount(el) {
     if (a === 'prev') return go(-1);
     if (a === 'next') return go(1);
     if (a === 'conn') return connect();
-    const v = e.target.closest('[data-v]'); if (v) return setView(v.dataset.v);
+    const v = e.target.closest('[data-v]'); if (v) { if (!plainClick(e)) return; e.preventDefault(); return route(v.dataset.v); }
     if (e.target.closest('#calConn')) return gcal.ready ? refresh() : connect();
     if (e.target.closest('#calCals')) return openCals(e.target.closest('#calCals'));
     if (!e.target.closest('#calPop')) $('#calPop', root).hidden = true;
@@ -417,6 +418,8 @@ export async function mount(el) {
   setInterval(() => { if (!editing && (view === 'dia' || view === 'semana')) { const n = root.querySelector('.cal-now'); if (n) { const d = new Date(); n.style.top = (d.getHours() + d.getMinutes() / 60) * HOUR_PX + 'px'; } } }, 60000);
 }
 export function enter() { if (gcal.ready) refresh(); }
+// #calendario/dia|semana|mes|tabla · #calendario/nuevo (se pueden abrir en otra pestaña)
+export function route(sub) { if (sub === 'nuevo') return newEvent(); if (!['dia', 'semana', 'mes', 'tabla'].includes(sub)) return; setView(sub); if (location.hash.startsWith('#calendario')) history.replaceState(null, '', '#calendario/' + sub); }
 export function newEvent() { const n = new Date(); n.setMinutes(0, 0, 0); openEditor(newDraft((view === 'dia' || view === 'semana') && cursor !== day0(Date.now()) ? cursor + 10 * 36e5 : n.getTime() + 36e5, false)); }
 
 /* =================== agente =================== */

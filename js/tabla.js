@@ -1,6 +1,7 @@
 // «Tabla PABE» — tabla tipo Notion, compartida por TODOS los módulos.
 // Cambiar este archivo cambia la tabla en todos los módulos a la vez.
 import { tags as tagStore } from './store.js';
+import { plainClick, fitPop } from './ui.js';
 
 export const PALETTE = ['#E5484D','#F76B15','#E2A400','#46A758','#12A594','#0090FF','#3E63DD','#8E4EC6','#D6409F','#A18072','#5B5BD6','#2B9A66','#CA244D','#978365','#0D74CE','#6E56CF'];
 export const TYPES = {
@@ -121,7 +122,7 @@ export function createTable(el, cfg) {
   function cell(r, p) {
     const v = val(r, p);
     switch (p.tipo) {
-      case 'title': return `<span class="tb-ttl">${esc(v) || '<span class="tb-ph">Sin título</span>'}</span>${p.opens ? '' : '<button class="tb-open" data-open>Abrir</button>'}`;
+      case 'title': { const t = esc(v) || '<span class="tb-ph">Sin título</span>'; if (p.opens && cfg.href) return `<a class="tb-ttl tb-lnk" href="${esc(cfg.href(r))}">${t}</a>`; return `<span class="tb-ttl">${t}</span>${p.opens ? '' : '<button class="tb-open" data-open>Abrir</button>'}`; }
       case 'number': return v === '' || v == null ? '' : fmtN.format(+v);
       case 'money': return v === '' || v == null ? '' : `<span class="${+v < 0 ? 'tb-neg' : +v > 0 && p.sign ? 'tb-pos' : ''}">${fmtM.format(+v)}</span>`;
       case 'date': return v ? fmtD.format(toDate(v)) : '';
@@ -145,7 +146,7 @@ export function createTable(el, cfg) {
     const head = vis.map(p => `<th data-prop="${p.id}" draggable="true"><button class="tb-th"><span class="tb-ti">${TYPES[p.tipo]?.i || ''}</span>${esc(p.nombre)}${P.sort?.id === p.id ? (P.sort.dir > 0 ? ' ↑' : ' ↓') : ''}</button><span class="tb-rz" data-rz="${p.id}"></span></th>`).join('');
     const body = rs.map(r => `<tr data-row="${esc(r.id)}"${sel.has(String(r.id)) ? ' class="tb-selrow"' : ''}><td class="tb-h"><label class="tb-sel"><input type="checkbox" class="tb-rchk" data-sel="${esc(r.id)}" ${sel.has(String(r.id)) ? 'checked' : ''} aria-label="Seleccionar"></label><button class="tb-grip" data-rmenu aria-label="Acciones">⋮</button></td>${vis.map(p => `<td data-cell="${p.id}" tabindex="0" class="tb-c tb-${p.tipo}${p.readonly ? ' ro' : ''}${p.opens ? ' tb-opens' : ''}">${cell(r, p)}</td>`).join('')}<td></td></tr>`).join('');
     const calc = vis.map(p => `<td><button class="tb-calc" data-calc="${p.id}">${calcText(p, rs) || '<span>Calcular</span>'}</button></td>`).join('');
-    const cards = rs.map(r => { const t = vis.find(p => p.tipo === 'title'); const rest = cfg.cardProps ? cfg.cardProps.map(id => allProps().find(p => p.id === id)).filter(Boolean) : vis.filter(p => p !== t && p.tipo !== 'content').slice(0, 4); return `<div class="tb-card${sel.has(String(r.id)) ? ' tb-selrow' : ''}" data-row="${esc(r.id)}"><label class="tb-sel tb-cardsel"><input type="checkbox" class="tb-rchk" data-sel="${esc(r.id)}" ${sel.has(String(r.id)) ? 'checked' : ''} aria-label="Seleccionar"></label><div class="tb-cardt">${t ? esc(val(r, t)) || 'Sin título' : ''}</div>${rest.map(p => { const h = cell(r, p); if (!h || p.tipo === 'check') return ''; if (p.tipo === 'content') return `<div class="tb-cardct">${h}</div>`; if (p.tipo === 'tags') return `<div class="tb-cardtags">${h}</div>`; if (cfg.cardProps && p.tipo === 'date') return `<div class="tb-carddate">${h}</div>`; return `<div class="tb-cardp"><span>${esc(p.nombre)}</span><span>${h}</span></div>`; }).join('')}</div>`; }).join('');
+    const cards = rs.map(r => { const t = vis.find(p => p.tipo === 'title'); const rest = cfg.cardProps ? cfg.cardProps.map(id => allProps().find(p => p.id === id)).filter(Boolean) : vis.filter(p => p !== t && p.tipo !== 'content').slice(0, 4); return `<div class="tb-card${sel.has(String(r.id)) ? ' tb-selrow' : ''}" data-row="${esc(r.id)}"><label class="tb-sel tb-cardsel"><input type="checkbox" class="tb-rchk" data-sel="${esc(r.id)}" ${sel.has(String(r.id)) ? 'checked' : ''} aria-label="Seleccionar"></label><div class="tb-cardt">${t ? (cfg.href && t.opens ? `<a class="tb-lnk" href="${esc(cfg.href(r))}">${esc(val(r, t)) || 'Sin título'}</a>` : esc(val(r, t)) || 'Sin título') : ''}</div>${rest.map(p => { const h = cell(r, p); if (!h || p.tipo === 'check') return ''; if (p.tipo === 'content') return `<div class="tb-cardct">${h}</div>`; if (p.tipo === 'tags') return `<div class="tb-cardtags">${h}</div>`; if (cfg.cardProps && p.tipo === 'date') return `<div class="tb-carddate">${h}</div>`; return `<div class="tb-cardp"><span>${esc(p.nombre)}</span><span>${h}</span></div>`; }).join('')}</div>`; }).join('');
     el.innerHTML = `
      <div class="tb-bar">${views}<div class="tb-tools">
       <button class="tb-tool" data-addfilter>Filtro</button><button class="tb-tool" data-addsort>Ordenar</button>
@@ -182,9 +183,7 @@ export function createTable(el, cfg) {
   function closePop() { pop?.remove(); pop = null; }
   function openPop(anchor, html, wide) {
     closePop(); pop = document.createElement('div'); pop.className = 'tb-pop' + (wide ? ' wide' : ''); pop.innerHTML = html; document.body.appendChild(pop);
-    const r = anchor.getBoundingClientRect(), w = pop.offsetWidth, h = pop.offsetHeight;
-    pop.style.left = Math.max(8, Math.min(r.left, innerWidth - w - 8)) + 'px';
-    pop.style.top = (r.bottom + h + 8 > innerHeight ? Math.max(8, r.top - h - 6) : r.bottom + 6) + 'px';
+    pop._place = fitPop(pop, anchor); // siempre dentro de la pantalla, también con el teclado del móvil abierto
     return pop;
   }
   document.addEventListener('pointerdown', e => { if (pop && !pop.contains(e.target) && !e.target.closest('[data-keep-pop]')) closePop(); });
@@ -244,10 +243,10 @@ export function createTable(el, cfg) {
       const exact = list.some(t => norm(t.nombre) === nq);
       const color = pickColor(sys);
       pop.innerHTML = `<div class="tb-pin">${cur.map(id => tagChip(tagStore.get(sys, id), true)).join('')}<input class="tb-pq" placeholder="Buscar o crear…" value="${esc(qq)}"></div>
-       <div class="tb-plist">${hits.map(t => `<button class="tb-pi" data-tag="${t.id}">${tagChip(t)}${cur.includes(t.id) ? '<em>✓</em>' : ''}</button>`).join('')}
-       ${nq && !exact && !p.fixed ? `<button class="tb-pi" data-create><span class="tb-mut">Crear</span> ${tagChip({ nombre: qq.trim(), color })}</button>` : ''}
+       <div class="tb-plist">${nq && !exact && !p.fixed ? `<button class="tb-pi" data-create><span class="tb-mut">Crear</span> ${tagChip({ nombre: qq.trim(), color })}</button>` : ''}
+       ${hits.map(t => `<button class="tb-pi" data-tag="${t.id}">${tagChip(t)}${cur.includes(t.id) ? '<em>✓</em>' : ''}</button>`).join('')}
        ${!hits.length && !nq ? '<p class="tb-mut tb-pad">Escribe para crear la primera.</p>' : ''}</div>`;
-      const i = pop.querySelector('.tb-pq'); i.focus(); i.setSelectionRange(i.value.length, i.value.length);
+      const i = pop.querySelector('.tb-pq'); i.enterKeyHint = 'done'; i.focus({ preventScroll: true }); i.setSelectionRange(i.value.length, i.value.length); pop.scrollTop = 0; pop._place?.();
       i.oninput = () => draw(i.value);
       i.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); const b = pop.querySelector('[data-create]') || pop.querySelector('[data-tag]'); b?.click(); } if (e.key === 'Backspace' && !i.value && cur.length) { p.set(r, cur.slice(0, -1)); cfg.save(r); draw(); render(); } };
       pop.onclick = e => {
@@ -413,6 +412,7 @@ export function createTable(el, cfg) {
     if (b?.classList.contains('tb-th')) return headMenu(b.closest('th'));
     if (b && 'open' in b.dataset) { openRow(rowById(b.closest('tr').dataset.row)); return; }
     if (b?.dataset.file != null && b.classList.contains('tb-file')) { const tr = b.closest('[data-row]'), r = rowById(tr.dataset.row), p = allProps().find(x => x.id === b.closest('td').dataset.cell); cfg.openFile?.(r, (val(r, p) || [])[+b.dataset.file]); return; }
+    const lk = t.closest('a.tb-lnk'); if (lk) { if (!plainClick(e)) return; e.preventDefault(); openRow(rowById(lk.closest('[data-row]').dataset.row)); return; }
     if (t.closest('a')) return;
     const card = t.closest('.tb-card'); if (card) { openRow(rowById(card.dataset.row)); return; }
     const td = t.closest('td.tb-c'); if (td && td.classList.contains('tb-opens')) { openRow(rowById(td.closest('tr').dataset.row)); return; }

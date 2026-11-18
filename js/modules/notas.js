@@ -1,6 +1,7 @@
 // Módulo 1 — Notas: lienzo infinito (lápiz tipo Nebo, texto, archivos) + biblioteca con la Tabla PABE
 import { collection, tags, files, on, syncNow } from '../store.js';
 import { createTable, pickColor, tagChip, PALETTE } from '../tabla.js';
+import { plainClick, fitPop } from '../ui.js';
 import { createSheet, importWorkbook, exportWorkbook, sheetFromRows, sheetTSV, newSheet, fmtVal } from '../hoja.js';
 const TXT = 18; // tamaño de letra estándar de todos los cuadros de texto
 
@@ -13,21 +14,24 @@ const rd = v => Math.round(v * 10) / 10, rd2 = v => Math.round(v * 100) / 100;
 const clone = o => JSON.parse(JSON.stringify(o));
 // Colores del lápiz: 'ink' = negro (blanco en modo oscuro). Se eligen tocando el círculo de color de la barra.
 const PENS = ['ink', '#8B8D98', '#2F6FEB', '#0090FF', '#12A594', '#2B9A66', '#FFC53D', '#F76B15', '#E5484D', '#D6409F', '#8E4EC6', '#AD7F58'];
-const SIZES = [['fino', .7], ['medio', 1], ['grueso', 1.5]];
+const SIZES = [['fino', .6], ['medio', 1], ['grueso', 1.7]];
 const penCss = c => c === 'ink' ? 'var(--ink)' : c;
-// brush = pincel (tinta viva con presión, como Nebo), mark = rotulador fosforito. ball/fount: trazos antiguos (se siguen viendo).
+// brush = pincel-rotulador (trazo lleno y parejo con un toque de presión, puntas redondas), mark = rotulador fosforito. ball/fount: trazos antiguos (se siguen viendo).
 const KINDS = { brush: { w: 8 }, mark: { w: 22 }, ball: { w: 3 }, fount: { w: 3.6 } };
 const L = { get(k) { try { return JSON.parse(localStorage.getItem('pabe:' + k)); } catch (e) { return null; } }, set(k, v) { try { localStorage.setItem('pabe:' + k, JSON.stringify(v)); } catch (e) {} } };
 
 let root, stage, world, ink, itemsEl, caret, toast, table;
 let cur = null, cam = { x: 0, y: 0, k: 1 }, sel = new Set(), hist = [], redo = [], lasso = false;
-let kind = ['brush', 'mark'].includes(L.get('kind')) ? L.get('kind') : 'brush', pen = L.get('pen') || 'ink', penSize = L.get('size') ?? 1, eraser = false, shapes = L.get('shapes') !== false;
+let kind = ['brush', 'mark'].includes(L.get('kind')) ? L.get('kind') : 'brush', pen = L.get('pen') || 'ink', eraser = false, shapes = L.get('shapes') !== false;
+// grosor propio de cada herramienta (0 fino, 1 medio, 2 grueso)
+const sizes = { brush: 1, mark: 1, ...(L.get('sizes') || { brush: L.get('size') ?? 1 }) };
+const curSize = () => sizes[kind] ?? 1;
 const urlCache = new Map();
 
 const HTML = `
 <div class="nt-stage" id="ntStage"><div class="nt-world"><svg class="nt-ink"></svg><div class="nt-items"></div></div></div>
 <div class="nt-top">
- <button class="libb" id="ntLib" title="Todas las notas (Ctrl+K)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span class="lg">Todas las notas</span><span class="sm">Notas</span></button>
+ <a class="libb" id="ntLib" href="#notas/todas" title="Todas las notas (Ctrl+K)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span class="lg">Todas las notas</span><span class="sm">Notas</span></a>
  <input id="ntTitle" class="nt-title" placeholder="Sin título" autocomplete="off" aria-label="Nombre de la nota">
  <div id="ntChips" class="nt-chips"></div><button id="ntTagBtn" class="ghost">+ área</button>
 </div>
@@ -73,7 +77,7 @@ function autoTitle() {
 function saveNow() {
   clearTimeout(saveT); if (!cur) return;
   autoTitle();
-  if (!cur.saved && isBlank()) return; cur.saved = true;
+  if (!cur.saved && isBlank()) return; if (!cur.saved) { cur.saved = true; setHash(); }
   const m = cur.meta, all = m.tabs.flatMap(t => (cur.doc.tabs[t.id] || []).map(i => ({ ...i, tab: t.id })));
   m.text = all.filter(i => (i.t === 'x' && i.s.trim()) || i.t === 'tb' || i.t === 'xl').map(i => i.t === 'tb' ? [(i.n || 'Tabla'), ...(i.rows || []).map(r => r.title)].join(', ') : i.t === 'xl' ? xlPreview(i) : i.s.trim()).join(' · ').slice(0, 3000);
   m.files = all.flatMap(i => [i.f, i.fx].filter(Boolean).map(f => ({ ...f, tab: i.tab, item: i.id })));
@@ -85,8 +89,10 @@ function saveNow() {
 export function newNote() {
   flushXlsx(); saveNow(); const t = gid();
   cur = { meta: { id: gid(), title: '', tags: [], tabs: [{ id: t, name: 'Hoja 1' }], created: Date.now(), updated: Date.now(), text: '', files: [], valores: {} }, doc: { tabs: { [t]: [] } }, saved: false, tab: t };
-  hist = []; redo = []; sel = new Set(); hideMenu(); hideCaret(); resetCam(); renderNote();
+  hist = []; redo = []; sel = new Set(); hideMenu(); hideCaret(); resetCam(); renderNote(); setHash();
 }
+// La dirección de la pestaña lleva la nota abierta (#notas/<id>): se puede copiar, recargar o abrir en otra pestaña
+function setHash() { if (!active() || !cur) return; const h = '#notas' + (cur.saved ? '/' + cur.meta.id : ''); if (location.hash !== h && location.hash.split('/')[0] === '#notas') history.replaceState(null, '', h); }
 async function openNote(id, focus) {
   const m = col.index.get(id); if (!m) return;
   if (!cur || cur.meta.id !== id) {
@@ -97,7 +103,7 @@ async function openNote(id, focus) {
     hist = []; redo = []; sel = new Set(); hideMenu(); hideCaret(); resetCam();
   }
   if (focus?.tab) cur.tab = focus.tab;
-  renderNote(); closeLib();
+  renderNote(); closeLib(); setHash();
   if (focus?.item) { const it = items().find(i => i.id === focus.item); if (it) { cam.k = 1; cam.x = stage.clientWidth / 2 - it.x - (it.w || 130) / 2; cam.y = stage.clientHeight / 2 - it.y - 40; applyCam(); sel = new Set([it.id]); markSel(); } }
 }
 
@@ -139,7 +145,7 @@ function mkPath(s) {
 const size = b => b > 1e6 ? (b / 1e6).toFixed(1) + ' MB' : Math.max(1, Math.round(b / 1e3)) + ' KB';
 function itemHtml(i) {
   const pos = `left:${i.x}px;top:${i.y}px`;
-  if (i.t === 'x') return `<div class="it tx" data-id="${i.id}" style="${pos};font-size:${TXT}px" spellcheck="false">${esc(i.s)}</div>`;
+  if (i.t === 'x') return `<div class="it tx" data-id="${i.id}" style="${pos};font-size:${TXT}px${i.mw ? `;max-width:${i.mw}px` : ''}" spellcheck="false">${esc(i.s)}</div>`;
   if (i.t === 'tb') return `<div class="it tbl" data-id="${i.id}" style="${pos};width:${i.w || 680}px"><div class="tbl-h"><span>⋮⋮</span><input class="tbl-name" value="${esc(i.n || '')}" placeholder="Tabla sin título" aria-label="Nombre de la tabla"></div><div class="tbl-body tb-host"></div><span class="rz"></span></div>`;
   if (i.t === 'xl') return `<div class="it xl" data-id="${i.id}" style="${pos};width:${i.w || 760}px;height:${i.h || 400}px"><div class="xl-h"><span class="xl-grip" title="Arrastra para mover">⋮⋮</span><span class="xl-badge">XLS</span><input class="xl-name" value="${esc(i.n || '')}" placeholder="Hoja de cálculo" aria-label="Nombre de la hoja de cálculo"><span class="xl-st"></span><button class="xl-b" data-xa="filter" title="Filtrar y ordenar por columnas (la fila seleccionada es la cabecera)">Filtro</button><button class="xl-b" data-xa="more" aria-label="Más opciones" title="Filas, columnas, hojas, descargar">⋯</button></div><div class="xl-body"></div><span class="rz"></span></div>`;
   if (i.t === 'i') return `<div class="it im" data-id="${i.id}" style="${pos};width:${i.w}px"><img data-fid="${esc(i.f.id)}" alt="${esc(i.f.n)}" draggable="false"><span class="rz"></span></div>`;
@@ -468,23 +474,40 @@ function togglePenPop() {
   const pop = $('#ntPenPop');
   if (!pop.hidden) { pop.hidden = true; return; }
   pop.innerHTML = `<div class="pp-cols">${PENS.map(c => `<button data-pc="${c}" class="${c === pen ? 'on' : ''}" style="--c:${penCss(c)}" aria-label="Color"></button>`).join('')}</div>
-  <div class="pp-sz">${SIZES.map(([n], i) => `<button data-ps="${i}" class="${i === penSize ? 'on' : ''}" title="${n}" aria-label="Grosor ${n}"><i style="height:${2 + i * 2.5}px"></i></button>`).join('')}</div>`;
-  pop.hidden = false;
+  ${sizeRow()}`;
+  pop.hidden = false; pop.dataset.for = 'color';
   const r = $('#ntColor').getBoundingClientRect(), w = pop.offsetWidth, h = pop.offsetHeight;
+  pop.style.left = Math.max(8, Math.min(innerWidth - w - 8, r.left + r.width / 2 - w / 2)) + 'px';
+  pop.style.top = Math.max(8, r.top - h - 10) + 'px';
+}
+const sizeRow = () => `<div class="pp-sz">${SIZES.map(([n], i) => `<button data-ps="${i}" class="${i === curSize() ? 'on' : ''}" title="${n}" aria-label="Grosor ${n}"><i style="height:${[2, 4.5, 8][i]}px;--pc:${penCss(pen)}"></i><span>${n}</span></button>`).join('')}</div>`;
+// Tocar el pincel (o el rotulador) abre sus grosores: fino, medio, grueso
+function toggleSizePop(btn) {
+  const pop = $('#ntPenPop');
+  if (!pop.hidden && pop.dataset.for === btn.dataset.k) { pop.hidden = true; return; }
+  pop.innerHTML = `<div class="pp-t">${btn.dataset.k === 'mark' ? 'Rotulador' : 'Pincel'} · grosor</div>${sizeRow()}`;
+  pop.hidden = false; pop.dataset.for = btn.dataset.k;
+  const r = btn.getBoundingClientRect(), w = pop.offsetWidth, h = pop.offsetHeight;
   pop.style.left = Math.max(8, Math.min(innerWidth - w - 8, r.left + r.width / 2 - w / 2)) + 'px';
   pop.style.top = Math.max(8, r.top - h - 10) + 'px';
 }
 function syncTools() {
   root.querySelectorAll('[data-k]').forEach(b => b.classList.toggle('on', !eraser && !lasso && b.dataset.k === kind));
-  const sw = $('#ntColor'); sw.style.setProperty('--c', penCss(pen)); sw.style.setProperty('--d', (8 + penSize * 6) + 'px'); sw.classList.toggle('on', !eraser);
+  const sw = $('#ntColor'); sw.style.setProperty('--c', penCss(pen)); sw.style.setProperty('--d', (8 + curSize() * 6) + 'px'); sw.classList.toggle('on', !eraser);
   $('#ntEraser').classList.toggle('on', eraser); $('#ntShapes').classList.toggle('on', shapes); $('#ntLasso').classList.toggle('on', lasso); stage.classList.toggle('lassoing', lasso);
   $('#ntShapes').title = shapes ? 'Reconocer formas: activado' : 'Reconocer formas: desactivado';
   stage.classList.toggle('erasing', eraser);
 }
 
 /* =================== texto =================== */
+// Ancho que cabe en pantalla desde x hasta el borde derecho (en el móvil el texto salta de línea en vez de salirse)
+const roomRight = x => (stage.clientWidth - cam.x) / cam.k - x - 16 / cam.k;
 function addText(w, initial) {
-  hideCaret(); snap(); const t = { id: gid(), t: 'x', x: rd(w.x), y: rd(w.y - 14), s: '', z: TXT }; items().push(t); renderItems();
+  hideCaret(); snap();
+  const t = { id: gid(), t: 'x', x: rd(w.x), y: rd(w.y - 14), s: '', z: TXT };
+  const minW = 150 / cam.k; if (roomRight(t.x) < minW) t.x = rd(Math.max(-cam.x / cam.k + 12 / cam.k, (stage.clientWidth - cam.x) / cam.k - minW - 16 / cam.k));
+  const room = roomRight(t.x); if (room < 560) t.mw = Math.round(Math.max(minW, room));
+  items().push(t); renderItems();
   const el = itemsEl.querySelector(`[data-id="${t.id}"]`); edit(el); if (initial) document.execCommand('insertText', false, initial);
 }
 // Texto plano dentro de un cuadro: un solo nodo de texto, saltos de línea reales
@@ -508,7 +531,27 @@ function editAt(el, e) {
     if (r && el.contains(r.startContainer)) { r.collapse(true); const s = getSelection(); s.removeAllRanges(); s.addRange(r); }
   } catch (_) {}
 }
-function edit(el) { el.contentEditable = 'plaintext-only'; if (el.contentEditable !== 'plaintext-only') el.contentEditable = 'true'; el.classList.add('editing'); el.focus(); const r = document.createRange(); r.selectNodeContents(el); r.collapse(false); const s = getSelection(); s.removeAllRanges(); s.addRange(r); }
+function edit(el) {
+  // si el cuadro se sale por la derecha (p. ej. una nota hecha en el ordenador abierta en el móvil), mientras se escribe salta de línea dentro de la pantalla
+  const it = items().find(i => i.id === el.dataset.id), room = it ? roomRight(it.x) : 560;
+  if (it && room < (it.mw || 560) && room > 120 / cam.k) el.style.maxWidth = Math.round(room) + 'px';
+  el.contentEditable = 'plaintext-only'; if (el.contentEditable !== 'plaintext-only') el.contentEditable = 'true'; el.classList.add('editing'); el.focus({ preventScroll: true }); const r = document.createRange(); r.selectNodeContents(el); r.collapse(false); const s = getSelection(); s.removeAllRanges(); s.addRange(r);
+  keepCaret();
+}
+// Que lo que se escribe se vea siempre: si el cursor queda debajo del teclado o fuera por un lado, el lienzo se mueve
+function keepCaret() {
+  requestAnimationFrame(() => {
+    const el = document.activeElement; if (!el || !el.classList?.contains('tx')) return;
+    const s = getSelection(); let r = s.rangeCount ? s.getRangeAt(0).getClientRects()[0] : null;
+    if (!r || (!r.width && !r.height && !r.top)) r = el.getBoundingClientRect();
+    const st = stage.getBoundingClientRect(), vv = window.visualViewport, vTop = vv ? vv.offsetTop : 0, vBot = vv ? vv.offsetTop + vv.height : innerHeight;
+    const top = Math.max(st.top + 64, vTop + 8), bot = Math.min(st.bottom - 70, vBot - 24), right = st.right - 12, left = st.left + 8;
+    let dx = 0, dy = 0;
+    if (r.bottom > bot) dy = bot - r.bottom - 20; else if (r.top < top) dy = top - r.top + 10;
+    if (r.right > right) dx = right - r.right - 30; else if (r.left < left) dx = left - r.left + 10;
+    if (dx || dy) { cam.x += dx; cam.y += dy; applyCam(); }
+  });
+}
 const editing = () => document.activeElement && document.activeElement.classList.contains('tx');
 
 /* =================== puntero: escribir y dibujar sin modos =================== */
@@ -517,11 +560,12 @@ const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y), mid = (a, b) => ({ x: (
 function showCaret(w) { caretW = w; lastW = w; caret.hidden = false; caret.style.left = w.x + 'px'; caret.style.top = (w.y - 12 / cam.k) + 'px'; caret.style.height = (22 / cam.k) + 'px'; caret.style.width = Math.max(1, 1.6 / cam.k) + 'px'; }
 function hideCaret() { if (caret) caret.hidden = true; caretW = null; }
 function isDouble(e, id) { const now = performance.now(), t = lastTap; lastTap = { t: now, x: e.clientX, y: e.clientY, id }; if (t && now - t.t < 380 && Math.hypot(e.clientX - t.x, e.clientY - t.y) < 28 && t.id === id) { lastTap = null; return true; } return false; }
-const baseW = () => KINDS[kind].w * (SIZES[penSize]?.[1] || 1) / cam.k;
-// Ancho del pincel: con el Pencil manda la presión; con dedo o ratón, la velocidad (rápido = más fino)
-function bw(e, v) { const W = baseW(); if (e.pointerType === 'pen' && e.pressure > 0) return W * (.3 + .95 * Math.pow(Math.min(1, e.pressure), .65)) * Math.max(.75, 1 - v * .08); return W * Math.max(.5, Math.min(1.08, 1.12 - v * .3)); }
+const baseW = () => KINDS[kind].w * (SIZES[curSize()]?.[1] || 1) / cam.k;
+// Ancho del pincel-rotulador: trazo lleno y parejo (como un rotulador) con un toque de pincel:
+// con el Pencil la presión lo engorda un poco; con dedo o ratón casi no cambia. Nunca se adelgaza tanto como para «cortarse».
+function bw(e, v) { const W = baseW(); if (e.pointerType === 'pen' && e.pressure > 0) return W * (.68 + .42 * Math.pow(Math.min(1, e.pressure), .7)) * Math.max(.9, 1 - v * .03); return W * Math.max(.88, Math.min(1.02, 1.04 - v * .08)); }
 function fw(e, v) { const pr = e.pointerType === 'pen' && e.pressure > 0 ? Math.min(1.3, Math.pow(e.pressure, .75) * 1.3) : Math.max(.3, Math.min(1.1, 1.15 - v * .45)); return baseW() * (.28 + 1.05 * pr); }
-function newStroke(w, e) { const s = { id: gid(), t: 's', k: kind, c: pen, w: rd2(baseW()) }; if (kind === 'brush') { s.v = 2; s.p = [rd(w.x), rd(w.y), rd2(bw(e, 0) * .85)]; } else s.p = [rd(w.x), rd(w.y)]; return s; }
+function newStroke(w, e) { const s = { id: gid(), t: 's', k: kind, c: pen, w: rd2(baseW()) }; if (kind === 'brush') { s.v = 2; s.p = [rd(w.x), rd(w.y), rd2(bw(e, 0) * .95)]; } else s.p = [rd(w.x), rd(w.y)]; return s; }
 function cancelAct() { if (act && act.k === 'draw') { cur.doc.tabs[cur.tab] = items().filter(i => i !== act.s); act.el.remove(); hist.pop(); } act = null; }
 function tapAt(e) { const w = toW(e); if (e.pointerType === 'touch') { addText(w); return; } if (isDouble(e, 'bg')) addText(w); else showCaret(w); }
 
@@ -611,7 +655,7 @@ function onMove(e) {
       act.v = act.v == null ? v : act.v * .6 + v * .4;
       // estabilizador suave: quita el temblor sin que el trazo vaya por detrás
       if (act.s.k === 'brush') { const lx = p[p.length - 3], ly = p[p.length - 2], k = .62; w.x = lx + (w.x - lx) * k; w.y = ly + (w.y - ly) * k; }
-      if (act.s.v === 2) { const pw = p[p.length - 1], nw = act.s.k === 'brush' ? bw(ev, act.v) : fw(ev, v); p.push(rd(w.x), rd(w.y), rd2(pw * .6 + nw * .4)); } else p.push(rd(w.x), rd(w.y));
+      if (act.s.v === 2) { const pw = p[p.length - 1], nw = act.s.k === 'brush' ? bw(ev, act.v) : fw(ev, v); p.push(rd(w.x), rd(w.y), rd2(act.s.k === 'brush' ? pw * .75 + nw * .25 : pw * .6 + nw * .4)); } else p.push(rd(w.x), rd(w.y));
     }
     // dibujar también por dónde va a ir el lápiz (menos retraso, como en papel)
     const pred = act.s.k === 'brush' && e.getPredictedEvents ? e.getPredictedEvents().slice(0, 2) : [];
@@ -641,7 +685,7 @@ function onUp(e) {
 }
 let act0v = 0;
 function finishStroke(s, el) {
-  if (s.v === 2 && s.k === 'brush') { const p = s.p, n = p.length / 3, fast = (act0v || 0) > 1.2; if (fast) [.35, .55, .75, .9].forEach((f, j) => { if (j < n - 1) p[(n - 1 - j) * 3 + 2] = rd2(p[(n - 1 - j) * 3 + 2] * f); }); }
+  if (s.v === 2 && s.k === 'brush') { /* puntas redondas, sin cola fina: no se «corta» al final */ }
   else if (s.v === 2) { const p = s.p, n = p.length / 3;[.45, .6, .75, .9].forEach((f, j) => { if (j < n - 1) p[(n - 1 - j) * 3 + 2] = rd2(p[(n - 1 - j) * 3 + 2] * f); }); }
   if (shapes && s.k !== 'mark') { const sh = detect(s); if (sh) { hist.push(JSON.stringify(items())); delete s.v; Object.assign(s, sh); } }
   el.replaceWith(mkPath(s));
@@ -762,14 +806,17 @@ async function openFile(ref, inDrive) {
 }
 
 /* =================== áreas =================== */
+// Áreas: primero el campo para crear (siempre a la vista, también con el teclado del móvil abierto) y debajo la lista
+let tagPlace = null;
 function renderTagPop(msg = '') {
   const list = tags.list(SYS), used = tags.usedColors(SYS), pop = $('#ntTagPop');
-  pop.innerHTML = `<h4>Áreas</h4>${list.length ? list.map(t => `<button class="trow" data-tg="${t.id}" style="--c:${t.color}"><i></i><span>${esc(t.nombre)}</span><em>${cur.meta.tags.includes(t.id) ? '✓' : ''}</em></button>`).join('') : '<p class="mut pad">Aún no hay áreas.</p>'}
-  <form class="newt" id="ntNewT"><input type="text" id="ntTName" placeholder="Nueva área" maxlength="32" autocomplete="off">
+  pop.innerHTML = `<form class="newt top" id="ntNewT"><div class="newt-row"><input type="text" id="ntTName" placeholder="Nueva área" maxlength="32" autocomplete="off" enterkeyhint="done"><button class="btn">Crear</button></div>
   <div class="pal">${PALETTE.map(c => `<button type="button" data-c="${c}" style="--c:${c}" ${used.has(c.toLowerCase()) ? 'disabled' : ''} class="${c === pop.dataset.color ? 'on' : ''}" aria-label="Color"></button>`).join('')}</div>
-  <div class="msg">${esc(msg)}</div><button class="btn" style="width:100%">Crear y añadir</button></form>`;
+  ${msg ? `<div class="msg">${esc(msg)}</div>` : ''}</form>
+  <h4>Áreas</h4>${list.length ? list.map(t => `<button class="trow" data-tg="${t.id}" style="--c:${t.color}"><i></i><span>${esc(t.nombre)}</span><em>${cur.meta.tags.includes(t.id) ? '✓' : ''}</em></button>`).join('') : '<p class="mut pad">Aún no hay áreas.</p>'}`;
+  tagPlace?.();
 }
-function openTagPop() { const pop = $('#ntTagPop'); pop.dataset.color = pickColor(SYS); renderTagPop(); const r = $('#ntTagBtn').getBoundingClientRect(); pop.hidden = false; pop.style.left = Math.min(r.left, innerWidth - 292) + 'px'; pop.style.top = (r.bottom + 6) + 'px'; setTimeout(() => $('#ntTName')?.focus(), 0); }
+function openTagPop() { const pop = $('#ntTagPop'); pop.dataset.color = pickColor(SYS); pop.hidden = false; renderTagPop(); pop.scrollTop = 0; tagPlace = fitPop(pop, $('#ntTagBtn')); setTimeout(() => $('#ntTName')?.focus({ preventScroll: true }), 0); }
 
 /* =================== biblioteca (Tabla PABE) =================== */
 function openLib() { saveNow(); $('#ntLibPanel').hidden = false; table.render(); syncNow(); }
@@ -795,6 +842,7 @@ function buildTable() {
     save: r => { if (cur && cur.meta.id === r.id) { Object.assign(cur.meta, { title: r.title, titleManual: r.titleManual, tags: r.tags, valores: r.valores }); renderChips(); $('#ntTitle').value = r.title; } col.put(r); },
     create: nombre => { const t = gid(), m = { id: gid(), title: nombre, titleManual: !!nombre, tags: [], tabs: [{ id: t, name: 'Hoja 1' }], created: Date.now(), text: '', files: [], valores: {} }; col.put(m, { tabs: { [t]: [] } }); return col.index.get(m.id); },
     open: r => openNote(r.id),
+    href: r => '#notas/' + r.id, // clic derecho en el nombre → abrir la nota en otra pestaña
     openFile: (r, f) => openNote(r.id, { tab: f.tab, item: f.item }),
     remove: r => { col.remove(r.id); if (cur?.meta.id === r.id) { cur.saved = false; newNote(); } },
     duplicate: async r => { const d = await col.load(r.id); const m = { ...clone(r), id: gid(), title: (r.title || 'Sin título') + ' (copia)', created: Date.now() }; col.put(m, d ? clone(d) : { tabs: {} }); },
@@ -840,7 +888,8 @@ export async function mount(el, opts = {}) {
   });
   stage.addEventListener('click', e => { const o = e.target.closest('[data-fopen]'), d = e.target.closest('[data-fdrive]'), x = e.target.closest('[data-fembed]'); if (o || d || x) { const it = items().find(i => i.id === e.target.closest('.it').dataset.id); if (it) x ? embedFileItem(it) : openFile(it.f, !!d); } });
 
-  itemsEl.addEventListener('input', e => { const el = e.target.closest('.tx'); if (!el) return; const it = items().find(i => i.id === el.dataset.id); if (it) { it.s = el.innerText.replace(/\n$/, ''); autoTitle(); dirty(); } });
+  itemsEl.addEventListener('input', e => { const el = e.target.closest('.tx'); if (!el) return; const it = items().find(i => i.id === el.dataset.id); if (it) { it.s = el.innerText.replace(/\n$/, ''); autoTitle(); dirty(); keepCaret(); } });
+  window.visualViewport?.addEventListener('resize', () => { if (editing()) keepCaret(); }); // al abrirse el teclado
   itemsEl.addEventListener('focusout', e => { const el = e.target.closest('.tx'); if (!el) return; el.contentEditable = 'false'; el.classList.remove('editing'); const it = items().find(i => i.id === el.dataset.id); if (it && !it.s.trim()) { cur.doc.tabs[cur.tab] = items().filter(i => i !== it); hist.pop(); renderItems(); dirty(); } });
   itemsEl.addEventListener('keydown', e => {
     const el = e.target.closest('.tx.editing'); if (!el || e.key !== 'Enter' || e.isComposing) return;
@@ -856,13 +905,13 @@ export async function mount(el, opts = {}) {
   $('#ntPenPop').addEventListener('click', e => {
     const b = e.target.closest('button'); if (!b) return;
     if (b.dataset.pc) { pen = b.dataset.pc; L.set('pen', pen); $('#ntPenPop').hidden = true; }
-    if (b.dataset.ps) { penSize = +b.dataset.ps; L.set('size', penSize); togglePenPop(); togglePenPop(); }
+    if (b.dataset.ps) { const k = $('#ntPenPop').dataset.for; if (k === 'brush' || k === 'mark') kind = k; sizes[kind] = +b.dataset.ps; L.set('sizes', sizes); L.set('kind', kind); lasso = false; $('#ntPenPop').hidden = true; }
     eraser = false; syncTools();
   });
-  document.addEventListener('pointerdown', e => { const p = $('#ntPenPop'); if (p && !p.hidden && !e.target.closest('#ntPenPop,#ntColor')) p.hidden = true; }, true);
+  document.addEventListener('pointerdown', e => { const p = $('#ntPenPop'); if (p && !p.hidden && !e.target.closest('#ntPenPop,#ntColor,[data-k]')) p.hidden = true; }, true);
   $('#ntTools').addEventListener('click', e => {
     const b = e.target.closest('button'); if (!b) return;
-    if (b.dataset.k) { kind = b.dataset.k; eraser = false; lasso = false; L.set('kind', kind); }
+    if (b.dataset.k) { kind = b.dataset.k; eraser = false; lasso = false; L.set('kind', kind); syncTools(); toggleSizePop(b); return; }
     if (b.id === 'ntColor') { togglePenPop(); return; }
     if (b.id === 'ntEraser') { eraser = !eraser; lasso = false; }
     if (b.id === 'ntShapes') { shapes = !shapes; L.set('shapes', shapes); flash(shapes ? 'Formas: se convierten en limpias' : 'Formas: se quedan a mano'); }
@@ -879,7 +928,7 @@ export async function mount(el, opts = {}) {
   });
   $('#ntFile').onchange = e => { attach([...e.target.files]); e.target.value = ''; };
   $('#ntZoom').onclick = resetCam;
-  $('#ntLib').onclick = openLib; $('#ntLibClose').onclick = closeLib; $('.nt-lib .scrim', el).onclick = closeLib;
+  $('#ntLib').onclick = e => { if (!plainClick(e)) return; e.preventDefault(); openLib(); }; $('#ntLibClose').onclick = closeLib; $('.nt-lib .scrim', el).onclick = closeLib;
 
   $('#ntTitle').addEventListener('input', e => { cur.meta.title = e.target.value; cur.meta.titleManual = !!e.target.value.trim(); if (!cur.meta.titleManual) autoTitle(); dirty(); });
   $('#ntTitle').addEventListener('keydown', e => { if (e.key === 'Enter') e.target.blur(); });
@@ -939,7 +988,7 @@ export async function mount(el, opts = {}) {
   addEventListener('pagehide', () => { flushXlsx(); saveNow(); });
   document.addEventListener('visibilitychange', () => { if (document.hidden) { flushXlsx(); saveNow(); } });
 
-  on('change', d => { if (d.col === 'notas' && !$('#ntLibPanel').hidden) table.render(); });
+  on('change', d => { if (d.col !== 'notas') return; if (pendingId && col.index.get(pendingId) && (!cur || !cur.saved)) { const id = pendingId; pendingId = null; openNote(id); } if (!$('#ntLibPanel').hidden) table.render(); });
   on('cfg', d => { if (d.col === 'notas') table.render(); });
   on('tags', () => { if (cur) renderChips(); if (!$('#ntLibPanel').hidden) table.render(); });
   on('remote', async d => { if (d.col === 'notas' && cur && cur.meta.id === d.id && !editing() && !document.activeElement?.closest?.('.xl,.tbl') && !xlT.size) { const m = col.index.get(d.id), doc = await col.load(d.id); if (doc) { cur.meta = clone(m); cur.doc = clone(doc); m.tabs.forEach(t => { cur.doc.tabs[t.id] = cur.doc.tabs[t.id] || []; }); if (!cur.doc.tabs[cur.tab]) cur.tab = m.tabs[0].id; renderNote(); } } });
@@ -950,6 +999,14 @@ let isActive = () => true;
 function active() { return isActive(); }
 export function setActiveCheck(fn) { isActive = fn; }
 export function enter() { closeLib(); newNote(); }
+// #notas/nueva → nota en blanco · #notas/todas → biblioteca · #notas/<id> → esa nota
+let pendingId = null;
+export function route(sub) {
+  if (sub === 'nueva') return enter();
+  if (sub === 'todas') return openLib();
+  if (col.index.get(sub)) { pendingId = null; return openNote(sub); }
+  pendingId = sub; // aún no ha llegado de la nube: se abre en cuanto llegue
+}
 export function leave() { flushXlsx(); saveNow(); hideMenu(); }
 
 /* =================== herramientas para el asistente =================== */

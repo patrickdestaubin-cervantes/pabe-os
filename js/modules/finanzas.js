@@ -1,3 +1,4 @@
+import { plainClick } from '../ui.js';
 // Módulo 2 — Finanzas (fase 1): Movimientos y Cuentas y patrimonio, con la Tabla PABE común
 import { collection, tags, files, on } from '../store.js';
 import { createTable } from '../tabla.js';
@@ -225,7 +226,7 @@ function render() {
 export async function mount(el) {
   root = el;
   el.innerHTML = `<div class="fin">
-   <header class="fin-head"><div class="fin-title"><h1>Finanzas</h1><nav class="fin-tabs"><button class="fin-tab" data-sec="movs">Movimientos</button><button class="fin-tab" data-sec="ctas">Cuentas y patrimonio</button><button class="fin-tab" data-sec="cf">Cashflow</button></nav></div><div class="fin-kpis" id="finKpis"></div></header>
+   <header class="fin-head"><div class="fin-title"><h1>Finanzas</h1><nav class="fin-tabs"><a class="fin-tab" data-sec="movs" href="#finanzas/movs">Movimientos</a><a class="fin-tab" data-sec="ctas" href="#finanzas/ctas">Cuentas y patrimonio</a><a class="fin-tab" data-sec="cf" href="#finanzas/cf">Cashflow</a></nav></div><div class="fin-kpis" id="finKpis"></div></header>
    <div class="tb-host" id="finMov"></div><div class="tb-host" id="finCta" hidden></div><div class="cf-host" id="finCf" hidden></div></div>`;
   await col.init(); await tags.init(); seedTags();
   // importación inicial desde la hoja «Finanzas_Personales_v2» (lo que había en la web de Finanzas)
@@ -235,13 +236,15 @@ export async function mount(el) {
   }
   tMov = buildMov($('#finMov', el)); tCta = buildCta($('#finCta', el));
   $('#finCf', el).addEventListener('click', e => { const b = e.target.closest('[data-cf],[data-cfm]'); if (!b) return; if (b.dataset.cfm) cfMeses = +b.dataset.cfm; else cfOpen.has(b.dataset.cf) ? cfOpen.delete(b.dataset.cf) : cfOpen.add(b.dataset.cf); render(); });
-  el.querySelector('.fin-tabs').addEventListener('click', e => { const b = e.target.closest('[data-sec]'); if (b) { section = b.dataset.sec; render(); } });
+  el.querySelector('.fin-tabs').addEventListener('click', e => { const b = e.target.closest('[data-sec]'); if (!b || !plainClick(e)) return; e.preventDefault(); route(b.dataset.sec); });
   on('change', d => { if (d.col === 'finanzas') render(); });
   on('cfg', d => { if (d.col === 'finanzas') render(); });
   on('tags', () => render());
   render();
 }
 export function enter() { render(); }
+// #finanzas/movs · #finanzas/ctas · #finanzas/cf (se pueden abrir en otra pestaña)
+export function route(sub) { if (!['movs', 'ctas', 'cf'].includes(sub)) return; section = sub; render(); if (location.hash.startsWith('#finanzas')) history.replaceState(null, '', '#finanzas/' + sub); }
 export function leave() {}
 
 /* ---------- herramientas para el asistente ---------- */
