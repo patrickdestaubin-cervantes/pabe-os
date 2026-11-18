@@ -654,12 +654,11 @@ function onMove(e) {
       const w = toW(ev); act.raw = { x: rd(w.x), y: rd(w.y) };
       act.v = act.v == null ? v : act.v * .6 + v * .4;
       // estabilizador suave: quita el temblor sin que el trazo vaya por detrás
-      if (act.s.k === 'brush') { const lx = p[p.length - 3], ly = p[p.length - 2], k = .62; w.x = lx + (w.x - lx) * k; w.y = ly + (w.y - ly) * k; }
+      if (act.s.k === 'brush') { const lx = p[p.length - 3], ly = p[p.length - 2], k = .82; w.x = lx + (w.x - lx) * k; w.y = ly + (w.y - ly) * k; }
       if (act.s.v === 2) { const pw = p[p.length - 1], nw = act.s.k === 'brush' ? bw(ev, act.v) : fw(ev, v); p.push(rd(w.x), rd(w.y), rd2(act.s.k === 'brush' ? pw * .75 + nw * .25 : pw * .6 + nw * .4)); } else p.push(rd(w.x), rd(w.y));
     }
-    // dibujar también por dónde va a ir el lápiz (menos retraso, como en papel)
-    const pred = act.s.k === 'brush' && e.getPredictedEvents ? e.getPredictedEvents().slice(0, 2) : [];
-    if (pred.length) { const q = { ...act.s, p: p.slice() }; for (const ev of pred) { const w = toW(ev); q.p.push(rd(w.x), rd(w.y), p[p.length - 1]); } act.el.setAttribute('d', strokeD(q)); }
+    // el trazo en pantalla llega justo hasta la punta del lápiz (sin dibujar por delante: así no «se encoge» al levantar)
+    if (act.s.k === 'brush' && act.raw) { const q = { ...act.s, p: p.slice() }; q.p.push(act.raw.x, act.raw.y, p[p.length - 1]); act.el.setAttribute('d', strokeD(q)); }
     else act.el.setAttribute('d', strokeD(act.s));
     return;
   }
@@ -676,7 +675,7 @@ function onUp(e) {
   act = null; const ok = e.type === 'pointerup';
   if (a.k === 'lasso') { a.el.remove(); if (ok && a.P.length >= 6) lassoSelect(a.P); else { lasso = false; syncTools(); } return; }
   if (a.k === 'movesel') { if (a.moved && ok) { selItems().forEach(i => shiftItem(i, a.dx, a.dy)); renderItems(); dirty(); showMenu('sel'); } else if (a.moved) renderItems(); else if (ok) { if (menuFor === 'sel') hideMenu(); else showMenu('sel'); } return; }
-  if (a.k === 'draw') { if (!a.isPen && a.moved < 4) { cur.doc.tabs[cur.tab] = items().filter(i => i !== a.s); a.el.remove(); hist.pop(); if (ok) tapAt(e); return; } act0v = a.v; if (a.s.k === 'brush' && a.raw) { const p = a.s.p; p.push(a.raw.x, a.raw.y, p[p.length - 1]); } finishStroke(a.s, a.el); dirty(); return; }
+  if (a.k === 'draw') { if (!a.isPen && a.moved < 4) { cur.doc.tabs[cur.tab] = items().filter(i => i !== a.s); a.el.remove(); hist.pop(); if (ok) tapAt(e); return; } act0v = a.v; if (a.s.k === 'brush') { const p = a.s.p, end = toW(e), last = a.raw && Math.hypot(end.x - a.raw.x, end.y - a.raw.y) * cam.k < 40 ? end : a.raw; if (last) p.push(rd(last.x), rd(last.y), p[p.length - 1]); } finishStroke(a.s, a.el); dirty(); return; }
   if (a.k === 'pan' && a.tbl) return; // un toque en la tabla lo atiende la propia tabla
   if (a.k === 'pan' && a.tap && ok) { tapAt(e); return; }
   if (a.k === 'move') { if (a.moved) { dirty(); drawSelBox(); } else if (ok && a.it.t === 'x' && sel.size <= 1) editAt(a.el, e); else if (ok) showMenu('sel'); return; }
