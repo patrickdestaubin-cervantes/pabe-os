@@ -684,7 +684,32 @@ function onUp(e) {
   if (a.k === 'erase') { if (a.hit) dirty(); else hist.pop(); }
 }
 let act0v = 0;
+// Rayar para borrar (como en Nebo): un garabato de ida y vuelta encima de lo escrito lo borra.
+// Si debajo no hay nada, el garabato se queda como dibujo normal. Ctrl+Z lo recupera.
+function scribbleErase(s) {
+  const st = s.v === 2 ? 3 : 2, p = s.p, n = p.length / st; if (n < 10) return false;
+  const X = [], Y = []; for (let i = 0; i < n; i++) { X.push(p[i * st]); Y.push(p[i * st + 1]); }
+  const x1 = Math.min(...X), x2 = Math.max(...X), y1 = Math.min(...Y), y2 = Math.max(...Y), W = x2 - x1, H = y2 - y1;
+  if (Math.max(W, H) * cam.k < 24) return false;
+  let len = 0; for (let i = 1; i < n; i++) len += Math.hypot(X[i] - X[i - 1], Y[i] - Y[i - 1]);
+  // idas y vueltas a lo largo del eje en que se mueve la mano
+  const turns = A => { const thr = Math.max(5 / cam.k, (Math.max(...A) - Math.min(...A)) * .25); let dir = 0, hi = A[0], lo = A[0], c = 0;
+    for (const v of A) { if (!dir) { if (v - A[0] > thr) { dir = 1; hi = v; } else if (A[0] - v > thr) { dir = -1; lo = v; } } else if (dir > 0) { if (v > hi) hi = v; else if (hi - v > thr) { c++; dir = -1; lo = v; } } else { if (v < lo) lo = v; else if (v - lo > thr) { c++; dir = 1; hi = v; } } }
+    return c; };
+  if (Math.max(turns(X), turns(Y)) < 4 || len < 2.2 * Math.max(W, H)) return false;
+  const pad = Math.max(6 / cam.k, (s.w || 4) / 2), inBox = (x, y) => x >= x1 - pad && x <= x2 + pad && y >= y1 - pad && y <= y2 + pad;
+  const gone = new Set();
+  for (const i of items()) {
+    if (i === s) continue;
+    if (i.t === 's') { const k = i.v === 2 ? 3 : 2, m = i.p.length / k; let c = 0; for (let j = 0; j < i.p.length; j += k) if (inBox(i.p[j], i.p[j + 1])) c++; if (m && c / m >= .6) gone.add(i.id); }
+    else if (i.t === 'x') { const b = bboxOf(i), ow = Math.min(b.x2, x2 + pad) - Math.max(b.x1, x1 - pad), oh = Math.min(b.y2, y2 + pad) - Math.max(b.y1, y1 - pad); if (ow > 0 && oh > 0 && ow * oh >= .6 * (b.x2 - b.x1) * (b.y2 - b.y1)) gone.add(i.id); }
+  }
+  if (!gone.size) return false;
+  cur.doc.tabs[cur.tab] = items().filter(i => i !== s && !gone.has(i.id)); sel = new Set(); renderItems();
+  flash('Borrado · Ctrl+Z o ↶ para recuperarlo'); return true;
+}
 function finishStroke(s, el) {
+  if (s.k === 'brush' && scribbleErase(s)) { el.remove(); return; }
   if (s.v === 2 && s.k === 'brush') { /* puntas redondas, sin cola fina: no se «corta» al final */ }
   else if (s.v === 2) { const p = s.p, n = p.length / 3;[.45, .6, .75, .9].forEach((f, j) => { if (j < n - 1) p[(n - 1 - j) * 3 + 2] = rd2(p[(n - 1 - j) * 3 + 2] * f); }); }
   if (shapes && s.k !== 'mark') { const sh = detect(s); if (sh) { hist.push(JSON.stringify(items())); delete s.v; Object.assign(s, sh); } }
