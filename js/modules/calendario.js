@@ -1,5 +1,5 @@
 import { plainClick } from '../ui.js';
-// Módulo Calendario: tu Google Calendar dentro de PABE (día, semana, mes y Tabla PABE). Lo que cambies aquí se guarda en Google Calendar y al revés.
+// Módulo Calendario: tu Google Calendar dentro de PABE (día, 5 días lun–vie, semana, mes y Tabla PABE). Lo que cambies aquí se guarda en Google Calendar y al revés.
 // Las propiedades propias de PABE (etiquetas, columnas nuevas) se guardan en el Drive: 06 PABE OS/Calendario/_datos2.
 import { gcal } from '../gcal.js';
 import { collection, tags, kv, on } from '../store.js';
@@ -90,6 +90,7 @@ async function fetchRange(a, b) {
 function viewRange() {
   if (view === 'dia') return [cursor, addDays(cursor, 1)];
   if (view === 'semana') { const a = weekStart(cursor); return [a, addDays(a, 7)]; }
+  if (view === 'laboral') { const a = weekStart(cursor); return [a, addDays(a, 5)]; }
   if (view === 'mes') { const d = new Date(cursor); const first = new Date(d.getFullYear(), d.getMonth(), 1).getTime(); const a = weekStart(first); return [a, addDays(a, 42)]; }
   return tableRange();
 }
@@ -157,7 +158,7 @@ const HTML = `
  <header class="cal-top">
   <div class="cal-nav"><button class="cal-b" data-a="today">Hoy</button><button class="cal-i" data-a="prev" aria-label="Anterior">‹</button><button class="cal-i" data-a="next" aria-label="Siguiente">›</button><h2 id="calTitle"></h2></div>
   <div class="cal-tools">
-   <div class="cal-seg" role="tablist">${[['dia', 'Día'], ['semana', 'Semana'], ['mes', 'Mes'], ['tabla', 'Tabla']].map(v => `<a data-v="${v[0]}" href="#calendario/${v[0]}" role="tab">${v[1]}</a>`).join('')}</div>
+   <div class="cal-seg" role="tablist">${[['dia', 'Día'], ['laboral', '5 días'], ['semana', 'Semana'], ['mes', 'Mes'], ['tabla', 'Tabla']].map(v => `<a data-v="${v[0]}" href="#calendario/${v[0]}" role="tab">${v[1]}</a>`).join('')}</div>
    <button class="cal-b" id="calCals" aria-label="Calendarios">Calendarios ▾</button>
    <button class="cal-conn" id="calConn"></button>
   </div>
@@ -186,13 +187,13 @@ function render() {
   $('.cal-nav', root).classList.toggle('dim', isT);
   const t = $('#calTitle', root), cap = x => x.charAt(0).toUpperCase() + x.slice(1);
   if (view === 'dia') t.textContent = cap(fDayLong.format(cursor));
-  else if (view === 'semana') { const a = weekStart(cursor), b = addDays(a, 6); t.textContent = new Date(a).getMonth() === new Date(b).getMonth() ? cap(fMonth.format(a)) : `${fShort.format(a)} – ${fShort.format(b)}`; }
+  else if (view === 'semana' || view === 'laboral') { const a = weekStart(cursor), b = addDays(a, view === 'laboral' ? 4 : 6); t.textContent = new Date(a).getMonth() === new Date(b).getMonth() ? cap(fMonth.format(a)) : `${fShort.format(a)} – ${fShort.format(b)}`; }
   else if (view === 'mes') t.textContent = cap(fMonth.format(cursor));
   else t.textContent = 'Eventos';
   if (isT) { table?.render(); return; }
   const body = $('#calBody', root);
   const keep = body.querySelector('.cal-scroll')?.scrollTop;
-  body.innerHTML = view === 'mes' ? monthHTML() : gridHTML(view === 'dia' ? [cursor] : Array.from({ length: 7 }, (_, i) => addDays(weekStart(cursor), i)));
+  body.innerHTML = view === 'mes' ? monthHTML() : gridHTML(view === 'dia' ? [cursor] : Array.from({ length: view === 'laboral' ? 5 : 7 }, (_, i) => addDays(weekStart(cursor), i)));
   const sc = body.querySelector('.cal-scroll');
   if (sc) sc.scrollTop = keep ?? Math.max(0, (new Date().getHours() - 1.5) * HOUR_PX);
   if (state !== 'ok' && !gcal.ready && !events.size) body.insertAdjacentHTML('beforeend', `<div class="cal-empty"><p>Conecta tu cuenta de Google para ver aquí tus eventos.</p><button class="cal-pri" data-a="conn">Conectar Google</button></div>`);
@@ -361,7 +362,7 @@ let flashT; function flash(t) { if (!toast) return; toast.textContent = t; toast
 
 function go(delta) {
   if (view === 'dia') cursor = addDays(cursor, delta);
-  else if (view === 'semana') cursor = addDays(cursor, 7 * delta);
+  else if (view === 'semana' || view === 'laboral') cursor = addDays(cursor, 7 * delta);
   else if (view === 'mes') { const d = new Date(cursor); cursor = new Date(d.getFullYear(), d.getMonth() + delta, 1).getTime(); }
   render(); refresh();
 }
@@ -405,7 +406,7 @@ export async function mount(el) {
     if (!root.isConnected || root.closest('[hidden]') || e.target.closest('input,textarea,select,[contenteditable]') || editing) return;
     if (e.key === 'ArrowLeft') go(-1); else if (e.key === 'ArrowRight') go(1);
     else if (e.key === 't') { cursor = day0(Date.now()); render(); refresh(); }
-    else if (e.key === 'd') setView('dia'); else if (e.key === 's') setView('semana'); else if (e.key === 'm') setView('mes');
+    else if (e.key === 'd') setView('dia'); else if (e.key === 's') setView('semana'); else if (e.key === 'l' || e.key === '5') setView('laboral'); else if (e.key === 'm') setView('mes');
   });
   on('change', d => { if (d?.col === 'calendario' && view === 'tabla') table.render(); });
   on('tags', () => { if (view === 'tabla') table.render(); });
@@ -415,12 +416,12 @@ export async function mount(el) {
   // al volver a la pestaña y cada minuto, traer cambios hechos desde Google Calendar
   clearInterval(refreshT); refreshT = setInterval(() => { if (gcal.ready && document.visibilityState === 'visible' && !editing) refresh(); }, 60000);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && gcal.ready) refresh(); });
-  setInterval(() => { if (!editing && (view === 'dia' || view === 'semana')) { const n = root.querySelector('.cal-now'); if (n) { const d = new Date(); n.style.top = (d.getHours() + d.getMinutes() / 60) * HOUR_PX + 'px'; } } }, 60000);
+  setInterval(() => { if (!editing && (view === 'dia' || view === 'semana' || view === 'laboral')) { const n = root.querySelector('.cal-now'); if (n) { const d = new Date(); n.style.top = (d.getHours() + d.getMinutes() / 60) * HOUR_PX + 'px'; } } }, 60000);
 }
 export function enter() { if (gcal.ready) refresh(); }
-// #calendario/dia|semana|mes|tabla · #calendario/nuevo (se pueden abrir en otra pestaña)
-export function route(sub) { if (sub === 'nuevo') return newEvent(); if (!['dia', 'semana', 'mes', 'tabla'].includes(sub)) return; setView(sub); if (location.hash.startsWith('#calendario')) history.replaceState(null, '', '#calendario/' + sub); }
-export function newEvent() { const n = new Date(); n.setMinutes(0, 0, 0); openEditor(newDraft((view === 'dia' || view === 'semana') && cursor !== day0(Date.now()) ? cursor + 10 * 36e5 : n.getTime() + 36e5, false)); }
+// #calendario/dia|laboral|semana|mes|tabla · #calendario/nuevo (se pueden abrir en otra pestaña)
+export function route(sub) { if (sub === 'nuevo') return newEvent(); if (!['dia', 'laboral', 'semana', 'mes', 'tabla'].includes(sub)) return; setView(sub); if (location.hash.startsWith('#calendario')) history.replaceState(null, '', '#calendario/' + sub); }
+export function newEvent() { const n = new Date(); n.setMinutes(0, 0, 0); openEditor(newDraft((view === 'dia' || view === 'semana' || view === 'laboral') && cursor !== day0(Date.now()) ? cursor + 10 * 36e5 : n.getTime() + 36e5, false)); }
 
 /* =================== agente =================== */
 const parseWhen = s => { if (!s) return NaN; return /^\d{4}-\d{2}-\d{2}$/.test(s) ? parseDay(s) : new Date(s.length === 16 ? s + ':00' : s).getTime(); };
@@ -466,8 +467,8 @@ export const agentDef = {
         const n = await saveEvent(f); if (etiquetas) await setMeta(n.key, { tags: tagIds(etiquetas) });
         return { ok: true, evento: brief(n) };
       } },
-    { name: 'ir_a_fecha', label: 'Abriendo el calendario', description: 'Muestra en pantalla una fecha (AAAA-MM-DD) en la vista indicada: dia, semana, mes o tabla.',
-      input_schema: { type: 'object', properties: { fecha: { type: 'string' }, vista: { type: 'string', enum: ['dia', 'semana', 'mes', 'tabla'] } }, required: ['fecha'] },
+    { name: 'ir_a_fecha', label: 'Abriendo el calendario', description: 'Muestra en pantalla una fecha (AAAA-MM-DD) en la vista indicada: dia, laboral (5 días, lunes a viernes), semana, mes o tabla.',
+      input_schema: { type: 'object', properties: { fecha: { type: 'string' }, vista: { type: 'string', enum: ['dia', 'laboral', 'semana', 'mes', 'tabla'] } }, required: ['fecha'] },
       run: ({ fecha, vista }) => { const d = parseDay(fecha); if (isNaN(d)) return { error: 'Fecha no válida' }; cursor = d; setView(vista || view); return { ok: true }; } },
     { name: 'listar_calendarios', label: 'Mirando tus calendarios', description: 'Lista los calendarios de Google conectados, si se ven y si se pueden editar.',
       input_schema: { type: 'object', properties: {} },
