@@ -168,11 +168,13 @@ export function createTable(el, cfg) {
     const pinChips = P.pins.map(pin => {
       const p = allProps().find(x => x.id === pin.id); if (!p) return '';
       const fi = P.filters.findIndex(f => f.pin === pin.key), f = P.filters[fi], tg = pinTag(pin, p);
-      if (f) return `<span class="tb-fchip tb-pinned"><button data-fedit="${fi}">${esc(p.nombre)}: ${esc(filterLabel(p, f))}</button><button class="tb-x" data-fdel="${fi}" aria-label="Quitar filtro">×</button></span>`;
-      return `<button class="tb-fchip tb-pinoff" data-pinon="${esc(pin.key)}">${tg ? `${esc(p.nombre)}: ${esc(tg.nombre || pin.tagName)}` : esc(p.nombre)}<span class="tb-ti">▾</span></button>`;
+      // en los filtros fijos de fecha, la flecha ↑/↓ ordena por esa fecha (un toque cambia entre ascendente y descendente)
+      const arrow = p.tipo === 'date' ? `<button class="tb-pinsort${P.sort?.id === p.id ? ' on' : ''}" data-pinsort="${p.id}" title="Ordenar por ${esc(p.nombre)}" aria-label="Cambiar orden">${P.sort?.id === p.id ? (P.sort.dir > 0 ? '↑' : '↓') : '↕'}</button>` : '';
+      if (f) return `<span class="tb-fchip tb-pinned">${arrow}<button data-fedit="${fi}">${esc(p.nombre)}: ${esc(filterLabel(p, f))}</button><button class="tb-x" data-fdel="${fi}" aria-label="Quitar filtro">×</button></span>`;
+      return `<span class="tb-fchip tb-pinoff">${arrow}<button data-pinon="${esc(pin.key)}">${tg ? `${esc(p.nombre)}: ${esc(tg.nombre || pin.tagName)}` : esc(p.nombre)}<span class="tb-ti">▾</span></button></span>`;
     }).join('');
     const chips = pinChips + P.filters.map((f, i) => { if (f.pin && P.pins.some(x => x.key === f.pin)) return ''; const p = allProps().find(x => x.id === f.id); return p ? `<span class="tb-fchip"><button data-fedit="${i}">${esc(p.nombre)}: ${esc(filterLabel(p, f))}</button><button class="tb-x" data-fdel="${i}" aria-label="Quitar filtro">×</button></span>` : ''; }).join('');
-    const sortChip = P.sort ? (() => { const p = allProps().find(x => x.id === P.sort.id); return p ? `<span class="tb-fchip tb-sortchip"><button data-sortflip>${P.sort.dir > 0 ? '↑' : '↓'} ${esc(p.nombre)}</button><button class="tb-x" data-sortdel aria-label="Quitar orden">×</button></span>` : ''; })() : '';
+    const sortChip = P.sort && !P.pins.some(x => x.id === P.sort.id && allProps().find(p => p.id === x.id)?.tipo === 'date') ? (() => { const p = allProps().find(x => x.id === P.sort.id); return p ? `<span class="tb-fchip tb-sortchip"><button data-sortflip>${P.sort.dir > 0 ? '↑' : '↓'} ${esc(p.nombre)}</button><button class="tb-x" data-sortdel aria-label="Quitar orden">×</button></span>` : ''; })() : '';
     const fw = fitWidths(vis);
     const cw = p => P.widths[p.id] || fw[p.id] || (p.tipo === 'title' ? 260 : p.tipo === 'content' ? 320 : p.tipo === 'check' ? 90 : 170);
     const cols = vis.map(p => `<col style="width:${cw(p)}px">`).join('');
@@ -435,6 +437,7 @@ export function createTable(el, cfg) {
     if (b && 'new' in b.dataset) { const r = cfg.create(''); render(); const td = el.querySelector(`tr[data-row="${CSS.escape(String(r.id))}"] td.tb-title`); if (td) startEdit(td); return; }
     if (b && 'addprop' in b.dataset) return addProp(b);
     if (b?.dataset.fedit) { const f = P.filters[+b.dataset.fedit]; return addFilter(b, f.id, +b.dataset.fedit); }
+    if (b?.dataset.pinsort) { const id = b.dataset.pinsort; P.sort = P.sort?.id === id ? { id, dir: -P.sort.dir } : { id, dir: -1 }; saveP(); render(); return; }
     if (b?.dataset.pinon) {
       const pin = P.pins.find(x => x.key === b.dataset.pinon), p = pin && allProps().find(x => x.id === pin.id); if (!p) return;
       const tg = pinTag(pin, p);

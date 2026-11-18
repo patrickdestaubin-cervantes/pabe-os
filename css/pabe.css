@@ -109,7 +109,8 @@ a.fin-tab{display:inline-flex;align-items:center;text-decoration:none}
 .tb-fchip{display:inline-flex;align-items:center;height:28px;border-radius:999px;background:color-mix(in srgb,#2383e2 10%,transparent);color:#1f6fc5;font-size:13px;padding:0 4px 0 11px}
 .tb-sortchip{background:var(--soft);color:var(--ink)}
 .tb-pinoff{background:transparent;border:1px dashed color-mix(in srgb,#2383e2 45%,var(--line));color:var(--mut);padding:0 10px;gap:4px}.tb-pinoff:hover{color:#1f6fc5;border-style:solid}
-.tb-pinoff .tb-ti{font-size:10px;opacity:.7}
+.tb-pinoff>button{display:inline-flex;align-items:center;gap:4px;height:100%;color:inherit}.tb-pinoff .tb-ti{font-size:10px;opacity:.7}
+.tb-pinsort{width:22px;height:22px;margin:0 4px 0 -6px;border-radius:50%;display:inline-grid;place-items:center;font-size:13px;color:var(--mut)}.tb-pinsort:hover{background:rgba(0,0,0,.06)}.tb-pinsort.on{color:#1f6fc5;font-weight:600}
 .tb-pinb{border-top:1px solid var(--line);margin-top:4px;color:var(--mut)}
 .tb-fchip .tb-x{margin-left:4px}
 .tb-x{width:20px;height:20px;border-radius:50%;display:inline-grid;place-items:center;font-size:14px;opacity:.6}.tb-x:hover{opacity:1;background:rgba(0,0,0,.06)}
