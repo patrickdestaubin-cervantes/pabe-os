@@ -184,7 +184,7 @@ class Collection {
     }
     await this.saveIndex(); await kv.set(this.name + ':dirty', [...this.dirty]); emit('change', { col: this.name });
   }
-  label() { return { notas: 'Notas', finanzas: 'Finanzas', viajes: 'Viajes', calendario: 'Calendario' }[this.name] || this.name; }
+  label() { return { notas: 'Notas', finanzas: 'Finanzas', viajes: 'Viajes', calendario: 'Calendario', dia: 'Orden del día' }[this.name] || this.name; }
 }
 
 /* ---------- sistemas de etiquetas (comunes a todo PABE) ---------- */

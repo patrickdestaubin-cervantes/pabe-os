@@ -6,6 +6,7 @@ import { supa, realtime } from './supa.js';
 import * as notas from './modules/notas.js';
 import * as finanzas from './modules/finanzas.js';
 import * as calendario from './modules/calendario.js';
+import * as dia from './modules/dia.js';
 import { agente, mountAgent, pullSettings } from './agente.js';
 import { plainClick } from './ui.js';
 
@@ -13,6 +14,7 @@ const $ = s => document.querySelector(s);
 // Módulos de PABE. «mod»: módulo ya integrado en esta web. «url»: módulo que aún vive en su propia web de pruebas.
 // Para añadir uno nuevo: una línea aquí + su botón en el carril (index.html).
 const MODULOS = [
+  { id: 'dia', nombre: 'Orden del día', descripcion: 'Lo importante de cada día', mod: dia },
   { id: 'notas', nombre: 'Notas', mod: notas },
   { id: 'calendario', nombre: 'Calendario', descripcion: 'Tu Google Calendar: Personal e I&S Homes', mod: calendario },
   { id: 'finanzas', nombre: 'Finanzas', descripcion: 'Movimientos, cuentas y patrimonio', mod: finanzas },
@@ -28,7 +30,7 @@ let current = null;
 
 // Rutas con dirección propia (#módulo/subruta): así cualquier botón se puede abrir en otra pestaña
 // (clic derecho → «Abrir en pestaña nueva», Ctrl/⌘+clic o clic con la rueda). Ej.: #notas/nueva, #notas/<id>, #calendario/semana, #finanzas/ctas
-const PLUS = { calendario: ['#calendario/nuevo', 'Evento nuevo'] };
+const PLUS = { calendario: ['#calendario/nuevo', 'Evento nuevo'], dia: ['#dia/nuevo', 'Compromiso nuevo'] };
 function go(m, keep, sub) {
   if (!MODS[m]) m = 'notas';
   if (current && current !== m) MODS[current].mod?.leave?.();
@@ -71,7 +73,7 @@ async function boot() {
   else if (login?.google) drive.use(login.google, login.expires_in, CONFIG.scope);
   $('#rail').addEventListener('click', e => { const b = e.target.closest('.mod'); if (!b || !plainClick(e)) return; e.preventDefault(); go(b.dataset.m); });
   // «+»: en Calendario crea un evento; en el resto, una nota nueva (clic derecho → abrirlo en otra pestaña)
-  $('#plus').onclick = e => { if (!plainClick(e)) return; e.preventDefault(); if (current === 'calendario') return calendario.newEvent(); if (current !== 'notas') go('notas'); else notas.enter(); };
+  $('#plus').onclick = e => { if (!plainClick(e)) return; e.preventDefault(); if (current === 'calendario') return calendario.newEvent(); if (current === 'dia') return dia.newItem(); if (current !== 'notas') go('notas'); else notas.enter(); };
   addEventListener('hashchange', fromHash);
   // ⟳ bajo el «+»: guarda lo que haya pendiente, busca la última versión de PABE y recarga esta pestaña (se queda en el mismo sitio)
   $('#reload').onclick = async () => {
@@ -85,8 +87,10 @@ async function boot() {
   await notas.mount(document.querySelector('[data-view=notas]'));
   await finanzas.mount(document.querySelector('[data-view=finanzas]'));
   await calendario.mount(document.querySelector('[data-view=calendario]'));
+  await dia.mount(document.querySelector('[data-view=dia]'));
   agente.register('finanzas', finanzas.agentDef);
   agente.register('calendario', calendario.agentDef);
+  agente.register('dia', dia.agentDef);
   agente.register('notas', notas.agentDef); agente.setCurrent(() => current || 'notas'); mountAgent();
   fromHash();
 

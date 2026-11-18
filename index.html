@@ -21,6 +21,7 @@
 <div id="app">
  <nav id="rail" aria-label="Módulos">
   <div class="logo">PABE</div>
+  <a class="mod" data-m="dia" href="#dia" title="Orden del día" aria-label="Orden del día"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.6"/><path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M5.3 18.7l1.6-1.6M17.1 6.9l1.6-1.6"/></svg></a>
   <a class="mod" data-m="notas" href="#notas" title="Notas" aria-label="Notas"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/></svg></a>
   <a class="mod" data-m="calendario" href="#calendario" title="Calendario" aria-label="Calendario"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><rect x="3.5" y="5" width="17" height="15" rx="2"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg></a>
   <a class="mod" data-m="finanzas" href="#finanzas" title="Finanzas" aria-label="Finanzas"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M15.5 8.5a4.5 4.5 0 1 0 0 7M7 11h6M7 13.5h6"/></svg></a>
@@ -28,6 +29,7 @@
  </nav>
  <main>
   <section class="view" data-view="notas"></section>
+  <section class="view" data-view="dia" hidden></section>
   <section class="view" data-view="finanzas" hidden></section>
   <section class="view" data-view="calendario" hidden></section>
   <section class="view soon" data-view="soon" hidden><div id="soonBody"></div></section>
