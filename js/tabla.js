@@ -136,13 +136,33 @@ export function createTable(el, cfg) {
   }
 
   /* ---------- pintar ---------- */
+  // cfg.fit: columnas que deben verse siempre enteras en la pantalla (p. ej. Fecha, Nombre, Área, Contenido en Notas).
+  // Mientras no les cambies el ancho a mano, se reparten el ancho disponible (tablet, ordenador); las demás quedan a la derecha.
+  function fitWidths(vis) {
+    const out = {}; if (!cfg.fit) return out;
+    const fit = vis.filter(p => cfg.fit.includes(p.id)); if (!fit.length) return out;
+    const W = (el.clientWidth || 1000) - 56 - 10;
+    const fixed = p => p.tipo === 'date' ? 120 : p.tipo === 'tags' ? Math.max(150, Math.min(240, W * .2)) : p.tipo === 'files' ? 130 : p.tipo === 'title' || p.tipo === 'content' ? 0 : 150;
+    let rest = W; const flex = [];
+    for (const p of fit) { const w = P.widths[p.id] || fixed(p); if (w) { out[p.id] = Math.round(w); rest -= w; } else flex.push(p); }
+    const title = flex.find(p => p.tipo === 'title'), content = flex.find(p => p.tipo === 'content');
+    if (title && content) { const t = Math.max(140, Math.min(380, rest * .42)); out[title.id] = Math.round(t); out[content.id] = Math.round(Math.max(180, rest - t)); }
+    else flex.forEach(p => { out[p.id] = Math.round(Math.max(160, rest / flex.length)); });
+    return out;
+  }
+  // al girar la tablet o cambiar el tamaño de la ventana, se vuelven a repartir
+  if (cfg.fit && window.ResizeObserver) { let lw = 0, rt; new ResizeObserver(() => { const w = el.clientWidth; if (!w || Math.abs(w - lw) < 24) return; lw = w; clearTimeout(rt); rt = setTimeout(() => { if (!editing && !pop && el.isConnected) render(); }, 150); }).observe(el); }
   function render() {
     if (editing) return;
     const vis = visible(), rs = rows();
     const views = cfg.views ? `<div class="tb-views">${cfg.views.map(v => `<button class="tb-view${P.view === v.id ? ' on' : ''}" data-view="${v.id}">${esc(v.nombre)}</button>`).join('')}</div>` : '<div class="tb-views"></div>';
     const chips = P.filters.map((f, i) => { const p = allProps().find(x => x.id === f.id); return p ? `<span class="tb-fchip"><button data-fedit="${i}">${esc(p.nombre)}: ${esc(filterLabel(p, f))}</button><button class="tb-x" data-fdel="${i}" aria-label="Quitar filtro">×</button></span>` : ''; }).join('');
     const sortChip = P.sort ? (() => { const p = allProps().find(x => x.id === P.sort.id); return p ? `<span class="tb-fchip tb-sortchip"><button data-sortflip>${P.sort.dir > 0 ? '↑' : '↓'} ${esc(p.nombre)}</button><button class="tb-x" data-sortdel aria-label="Quitar orden">×</button></span>` : ''; })() : '';
-    const cols = vis.map(p => `<col style="width:${P.widths[p.id] || (p.tipo === 'title' ? 260 : p.tipo === 'content' ? 320 : p.tipo === 'check' ? 90 : 170)}px">`).join('');
+    const fw = fitWidths(vis);
+    const cw = p => P.widths[p.id] || fw[p.id] || (p.tipo === 'title' ? 260 : p.tipo === 'content' ? 320 : p.tipo === 'check' ? 90 : 170);
+    const cols = vis.map(p => `<col style="width:${cw(p)}px">`).join('');
+    // ancho total fijo: así un nombre largo no ensancha su columna (se corta con «…»)
+    const tw = 56 + vis.reduce((a, p) => a + cw(p), 0) + 48;
     const head = vis.map(p => `<th data-prop="${p.id}" draggable="true"><button class="tb-th"><span class="tb-ti">${TYPES[p.tipo]?.i || ''}</span>${esc(p.nombre)}${P.sort?.id === p.id ? (P.sort.dir > 0 ? ' ↑' : ' ↓') : ''}</button><span class="tb-rz" data-rz="${p.id}"></span></th>`).join('');
     const body = rs.map(r => `<tr data-row="${esc(r.id)}"${sel.has(String(r.id)) ? ' class="tb-selrow"' : ''}><td class="tb-h"><label class="tb-sel"><input type="checkbox" class="tb-rchk" data-sel="${esc(r.id)}" ${sel.has(String(r.id)) ? 'checked' : ''} aria-label="Seleccionar"></label><button class="tb-grip" data-rmenu aria-label="Acciones">⋮</button></td>${vis.map(p => `<td data-cell="${p.id}" tabindex="0" class="tb-c tb-${p.tipo}${p.readonly ? ' ro' : ''}${p.opens ? ' tb-opens' : ''}">${cell(r, p)}</td>`).join('')}<td></td></tr>`).join('');
     const calc = vis.map(p => `<td><button class="tb-calc" data-calc="${p.id}">${calcText(p, rs) || '<span>Calcular</span>'}</button></td>`).join('');
@@ -154,7 +174,7 @@ export function createTable(el, cfg) {
       <button class="tb-tool" data-colsmenu aria-label="Columnas">⋯</button>
       ${cfg.newButton === false ? '' : `<button class="tb-new" data-new>${esc(cfg.newLabel || 'Nuevo')}</button>`}</div></div>
      ${sel.size ? `<div class="tb-bulk"><b>${sel.size} ${sel.size === 1 ? 'seleccionada' : 'seleccionadas'}</b><button data-bprop>Editar propiedad</button>${cfg.duplicate ? '<button data-bdup>Duplicar</button>' : ''}<button data-bdel class="tb-danger">Eliminar</button><button class="tb-x" data-bclr aria-label="Quitar selección">×</button></div>` : chips || sortChip ? `<div class="tb-chips">${sortChip}${chips}</div>` : ''}
-     <div class="tb-wrap"><table class="tb"><colgroup><col style="width:56px">${cols}<col></colgroup>
+     <div class="tb-wrap"><table class="tb" style="width:${tw}px"><colgroup><col style="width:56px">${cols}<col></colgroup>
       <thead><tr><th class="tb-h"><label class="tb-sel"><input type="checkbox" class="tb-allchk" ${rs.length && rs.every(r => sel.has(String(r.id))) ? 'checked' : ''} aria-label="Seleccionar todas"></label></th>${head}<th class="tb-plus"><button data-addprop aria-label="Nueva propiedad">+</button></th></tr></thead>
       <tbody>${body}<tr class="tb-newrow"><td class="tb-h"></td><td colspan="${vis.length + 1}"><input class="tb-newin" placeholder="+ ${esc(cfg.newRow || 'Nueva')}" aria-label="Nuevo elemento"></td></tr></tbody>
       <tfoot><tr><td class="tb-h"></td>${calc}<td></td></tr></tfoot></table>
@@ -441,9 +461,11 @@ export function createTable(el, cfg) {
   el.addEventListener('pointerdown', e => {
     const rz = e.target.closest('[data-rz]'); if (!rz) return; e.preventDefault(); e.stopPropagation();
     const th = rz.closest('th'), col = el.querySelectorAll('col')[[...th.parentNode.children].indexOf(th)], x0 = e.clientX, w0 = th.offsetWidth;
-    const mv = ev => { const w = Math.max(70, w0 + ev.clientX - x0); col.style.width = w + 'px'; P.widths[rz.dataset.rz] = w; };
-    const upf = () => { removeEventListener('pointermove', mv); removeEventListener('pointerup', upf); saveP(); };
-    addEventListener('pointermove', mv); addEventListener('pointerup', upf);
+    th.draggable = false; rz.classList.add('on'); try { rz.setPointerCapture(e.pointerId); } catch (_) {}
+    const tb = th.closest('table'), t0 = tb.offsetWidth;
+    const mv = ev => { const w = Math.max(70, Math.round(w0 + ev.clientX - x0)); col.style.width = w + 'px'; tb.style.width = t0 + w - w0 + 'px'; P.widths[rz.dataset.rz] = w; };
+    const upf = () => { removeEventListener('pointermove', mv); removeEventListener('pointerup', upf); removeEventListener('pointercancel', upf); th.draggable = true; rz.classList.remove('on'); saveP(); };
+    addEventListener('pointermove', mv); addEventListener('pointerup', upf); addEventListener('pointercancel', upf);
   });
   // reordenar columnas arrastrando la cabecera
   let dragCol = null;

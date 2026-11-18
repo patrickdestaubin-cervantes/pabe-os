@@ -850,14 +850,15 @@ function buildTable() {
   table = createTable($('#ntTable'), {
     key: 'notas', newButton: false, newRow: 'Nueva nota', empty: 'Aún no hay notas. Escribe o dibuja en el lienzo y se guardan solas.',
     defaultHidden: ['updated'],
-    cardProps: ['area', 'content', 'created'], // en el móvil: título, área y contenido primero
+    cardProps: ['area', 'content', 'created'],
+    fit: ['created', 'title', 'area', 'content'], // en tablet y ordenador, estas cuatro siempre a la vista // en el móvil: título, área y contenido primero
     views: [{ id: 'all', nombre: 'Todas' }, { id: 'recent', nombre: 'Últimos 7 días', filter: r => Date.now() - (r.updated || r.created) < 7 * 864e5 }, { id: 'files', nombre: 'Con archivos', filter: r => (r.files || []).length > 0 }],
     props: () => [
       { id: 'created', nombre: 'Fecha', tipo: 'date', basica: true, readonly: true, get: r => r.created },
       { id: 'title', nombre: 'Nombre', tipo: 'title', basica: true, readonly: true, opens: true, get: r => r.title },
       { id: 'area', nombre: 'Área', tipo: 'tags', basica: true, sistema: SYS, get: r => r.tags || [], set: (r, v) => { r.tags = v; } },
-      { id: 'files', nombre: 'Archivos', tipo: 'files', basica: true, readonly: true, get: r => r.files || [] },
       { id: 'content', nombre: 'Contenido', tipo: 'content', basica: true, readonly: true, get: r => r.text || (r.ink ? 'Dibujo a mano' : '') },
+      { id: 'files', nombre: 'Archivos', tipo: 'files', basica: true, readonly: true, get: r => r.files || [] },
       { id: 'updated', nombre: 'Última edición', tipo: 'date', basica: true, readonly: true, get: r => r.updated },
     ],
     custom: () => (col.cfg?.props || custom),
