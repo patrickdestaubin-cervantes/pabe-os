@@ -37,6 +37,8 @@ const HTML = `
  <div id="ntChips" class="nt-chips"></div><button id="ntTagBtn" class="ghost">+ área</button>
 </div>
 <div class="nt-side"><button id="ntZoom" class="nt-zoom" title="Restablecer vista">100%</button></div>
+<button id="ntMic" class="nt-mic" title="Dictar: lo que digas se escribe con tu letra (mantén pulsado para enseñarle tu letra)" aria-label="Dictar con tu letra"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button><div class="nt-dict" id="ntDict" hidden></div>
+<div class="nt-glyphs" id="ntGlyphs" hidden></div>
 <div class="nt-tabs" id="ntTabs"></div>
 <div class="nt-tools" id="ntTools" role="toolbar" aria-label="Herramientas">
  <button class="tl" data-k="brush" title="Pincel" aria-label="Pincel"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"><path d="M19.5 3.5c-3 1.6-7.4 6-9.3 9l2 2c3-2 7.4-6.4 9-9.3z"/><path d="M10.2 12.5c-2.2-.3-4 1.3-4 3.3 0 1.5-.8 2.6-2.2 3.2 3.6 1.5 8.2.4 8.2-3.4"/></svg></button>
@@ -269,6 +271,114 @@ async function savePdf(it) {
     const gl = gs[gs.length - 1]; snap(); items().push({ id: gid(), t: 'f', x: it.x, y: rd((gl ? gl.y + gl.h : it.y + 60) + 16), f: ref });
     renderItems(); dirty(); flash(`Guardado en Drive: «${name}»`);
   } catch (e) { console.warn(e); flash('No se pudo guardar el PDF: ' + (e.message || e)); }
+}
+
+
+/* =================== dictar con tu letra ===================
+   El micrófono (encima del asistente) escucha y lo que dices se escribe en la nota con TU letra:
+   PABE usa tu «alfabeto personal», que escribes una vez (cada letra, número y signo) en «Enseñar mi letra». */
+const GLYPH_CHARS = 'ABCDEFGHIJKLMNÑOPQRSTUVWXYZ0123456789.,:;?¿!¡()-/€@%+´';
+let glyphs = null; // { 'A': { s: [[x,y,w,…], …], adv } } en unidades de «altura de mayúscula» (1 = de la línea de arriba a la de base)
+async function loadGlyphs() { const c = await col.getCfg(); glyphs = c.glyphs || {}; return glyphs; }
+async function saveGlyphs(g) { glyphs = g; const c = await col.getCfg(); await col.setCfg({ ...c, glyphs: g }); }
+const rnd = (a, b) => a + Math.random() * (b - a);
+function glyphFor(ch) {
+  if (glyphs[ch]) return [glyphs[ch]];
+  const d = ch.normalize('NFD'), base = d[0], acc = d.slice(1);
+  if (glyphs[base]) { const out = [glyphs[base]]; if (acc.includes('́') && glyphs['´']) out.push({ ...glyphs['´'], accent: true }); return out; }
+  return null;
+}
+// Escribe un texto con tu letra a partir de pos {x, y(base), x0, maxX}; devuelve dónde termina
+function writeHand(text, pos) {
+  const Hc = 30 * (SIZES[curSize()]?.[1] || 1), step = Hc * 1.85, gap = Hc * .14, space = Hc * .62, list = [];
+  let { x, y } = pos; const missing = new Set();
+  const words = text.toUpperCase().split(/\s+/).filter(Boolean);
+  for (const w of words) {
+    const gs = [...w].map(ch => ({ ch, g: glyphFor(ch) })), ww = gs.reduce((a, o) => a + (o.g ? o.g[0].adv * Hc + gap : 0), 0);
+    if (x > pos.x0 && x + ww > pos.maxX) { x = pos.x0; y += step; }
+    for (const { ch, g } of gs) {
+      if (!g) { missing.add(ch); continue; }
+      const sc = Hc * rnd(.96, 1.04), rot = rnd(-.035, .035), dy = rnd(-.03, .03) * Hc, cs = Math.cos(rot), sn = Math.sin(rot);
+      for (const part of g) {
+        const ox = part.accent ? x + (g[0].adv - (part.adv || .3)) / 2 * sc : x, oy = part.accent ? y - 1.25 * sc : y;
+        for (const st of part.s) {
+          const p = []; for (let j = 0; j < st.length; j += 3) { const gx = st[j] * sc, gy = st[j + 1] * sc; p.push(rd(ox + gx * cs - gy * sn), rd(oy + dy + gx * sn + gy * cs), rd2(Math.max(.6, baseW() * .7 * st[j + 2]))); }
+          list.push({ id: gid(), t: 's', k: 'brush', c: pen, w: rd2(baseW()), v: 2, p });
+        }
+      }
+      x += g[0].adv * sc + gap;
+    }
+    x += space;
+  }
+  if (list.length) { items().push(...list); markLast(list[list.length - 1].id); }
+  if (missing.size) flash('Me faltan estas letras en tu alfabeto: ' + [...missing].join(' ') + ' (mantén pulsado el micrófono para enseñármelas)');
+  return { ...pos, x, y };
+}
+// dónde empezar: en un renglón nuevo debajo de todo lo escrito, alineado a la izquierda de la nota
+function dictStart() {
+  const a = items(), Hc = 30 * (SIZES[curSize()]?.[1] || 1), W = stage.clientWidth;
+  const viewL = -cam.x / cam.k, viewR = (W - cam.x) / cam.k;
+  if (!a.length) { const c = centerW(); const x0 = Math.max(viewL + 24 / cam.k, c.x - 200); return { x: x0, x0, y: c.y + Hc, maxX: Math.min(viewR - 24 / cam.k, x0 + 900) }; }
+  const all = unionBox(a.map(bboxOf)), x0 = all.x1;
+  return { x: x0, x0, y: all.y2 + Hc * 1.85, maxX: Math.max(x0 + 300, Math.min(Math.max(all.x2, x0 + 500), x0 + 1100)) };
+}
+function followPos(pos) { const r = stage.clientHeight, sy = cam.y + pos.y * cam.k; if (sy > r - 140) { cam.y -= sy - (r - 220); applyCam(); } }
+let rec = null;
+async function dictate() {
+  if (rec) { rec.stop(); return; }
+  await loadGlyphs();
+  if (Object.keys(glyphs).length < 20) { flash('Primero enséñame tu letra: escribe cada letra una vez'); return openGlyphs(); }
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) return flash('Este navegador no deja dictar aquí. Prueba en Chrome o Safari');
+  const mic = $('#ntMic'), bub = $('#ntDict');
+  let pos = dictStart(); followPos(pos);
+  rec = new SR(); rec.lang = 'es-ES'; rec.continuous = true; rec.interimResults = true;
+  rec.onresult = e => {
+    let interim = '';
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const r = e.results[i];
+      if (r.isFinal) { const t = r[0].transcript.trim(); if (t) { snap(); pos = writeHand(t, pos); renderItems(); dirty(); followPos(pos); } }
+      else interim += r[0].transcript;
+    }
+    bub.hidden = !interim; bub.textContent = interim;
+  };
+  rec.onerror = ev => { if (ev.error === 'not-allowed') flash('Permite el micrófono para dictar'); };
+  rec.onend = () => { rec = null; mic.classList.remove('on'); bub.hidden = true; };
+  try { rec.start(); mic.classList.add('on'); flash('Te escucho… (toca otra vez para parar)'); } catch (_) { rec = null; }
+}
+// «Enseñar mi letra»: una casilla por letra; se escribe con el lápiz (o el dedo) como lo haces siempre
+function openGlyphs() {
+  const box = $('#ntGlyphs'), work = JSON.parse(JSON.stringify(glyphs || {}));
+  const cell = ch => `<div class="gl-c" data-ch="${esc(ch)}"><svg viewBox="0 0 100 100"><line x1="4" x2="96" y1="25" y2="25"/><line x1="4" x2="96" y1="75" y2="75"/><text x="50" y="72" text-anchor="middle">${esc(ch)}</text><g></g></svg><button class="gl-x" aria-label="Borrar ${esc(ch)}">×</button></div>`;
+  box.innerHTML = `<div class="gl-panel"><header><b>Enseñar mi letra</b><span class="mut">Escribe cada letra, número y signo una vez, entre las dos rayas, como lo haces siempre. «´» es la tilde.</span><button class="btn" id="glSave">Guardar</button><button class="gl-close" id="glClose" aria-label="Cerrar">✕</button></header><div class="gl-grid">${[...GLYPH_CHARS].map(cell).join('')}</div></div>`;
+  box.hidden = false;
+  const paint = (c, ch) => { const g = c.querySelector('g'); const gl = work[ch]; g.innerHTML = gl ? gl.raw.map(p => `<path d="${brushD(p)}"/>`).join('') : ''; c.classList.toggle('done', !!gl); };
+  box.querySelectorAll('.gl-c').forEach(c => paint(c, c.dataset.ch));
+  let drawing = null;
+  box.querySelector('.gl-grid').addEventListener('pointerdown', e => {
+    const c = e.target.closest('.gl-c'); if (!c) return;
+    if (e.target.closest('.gl-x')) { delete work[c.dataset.ch]; paint(c, c.dataset.ch); return; }
+    e.preventDefault(); const svg = c.querySelector('svg'), r = svg.getBoundingClientRect(), pt = ev => [rd2((ev.clientX - r.left) / r.width * 100), rd2((ev.clientY - r.top) / r.height * 100), rd2(6 * (ev.pointerType === 'pen' && ev.pressure > 0 ? .68 + .42 * ev.pressure : 1))];
+    const ch = c.dataset.ch; work[ch] = work[ch] || { raw: [] }; const st = [...pt(e)]; work[ch].raw.push(st);
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path'); c.querySelector('g').appendChild(path);
+    drawing = { c, ch, st, path, pt }; try { e.target.setPointerCapture(e.pointerId); } catch (_) {}
+  });
+  box.addEventListener('pointermove', e => { if (!drawing) return; const q = drawing.pt(e), st = drawing.st; if (Math.hypot(q[0] - st[st.length - 3], q[1] - st[st.length - 2]) < .8) return; st.push(...q); drawing.path.setAttribute('d', brushD(st)); });
+  const up = () => { if (drawing) { drawing.c.classList.add('done'); drawing = null; } };
+  box.addEventListener('pointerup', up); box.addEventListener('pointercancel', up);
+  $('#glClose').onclick = () => { box.hidden = true; };
+  $('#glSave').onclick = async () => {
+    const out = {};
+    for (const [ch, g] of Object.entries(work)) {
+      if (!g.raw?.length) continue;
+      let minX = Infinity, maxX = -Infinity, sw = 0, n = 0; g.raw.forEach(st => { for (let j = 0; j < st.length; j += 3) { minX = Math.min(minX, st[j]); maxX = Math.max(maxX, st[j]); sw += st[j + 2]; n++; } });
+      const avgW = sw / n || 6;
+      // unidades: 1 = altura de mayúscula (50 en la casilla), origen en la izquierda de la letra y la línea de base
+      const s1 = g.raw.map(st => { const o = []; for (let j = 0; j < st.length; j += 3) o.push(rd2((st[j] - minX) / 50 * 100) / 100, rd2((st[j + 1] - 75) / 50 * 100) / 100, rd2(st[j + 2] / avgW)); return o; });
+      out[ch] = { s: s1, adv: rd2(Math.max(.15, (maxX - minX) / 50)), raw: g.raw };
+    }
+    await saveGlyphs(out); box.hidden = true; flash(`Tu letra guardada (${Object.keys(out).length} de ${GLYPH_CHARS.length})`);
+  };
 }
 
 /* =================== abrir / nueva =================== */
@@ -1192,6 +1302,11 @@ export async function mount(el, opts = {}) {
     if (b.dataset.pa === 'open') openFile(it.f);
     if (b.dataset.pa === 'pager') { pager = { id: it.id, k: 0 }; pagerGo(0); }
   });
+  { const m = $('#ntMic'); let lp = null, longp = false;
+    m.addEventListener('pointerdown', () => { longp = false; lp = setTimeout(async () => { longp = true; await loadGlyphs(); openGlyphs(); }, 600); });
+    m.addEventListener('pointerup', () => clearTimeout(lp)); m.addEventListener('pointerleave', () => clearTimeout(lp));
+    m.addEventListener('contextmenu', e => e.preventDefault());
+    m.addEventListener('click', () => { if (!longp) dictate(); }); }
   $('#ntPager').addEventListener('click', e => { const b = e.target.closest('[data-pg]'); if (!b || !pager) return; if (b.dataset.pg === 'x') pagerOff(); else pagerGo(pager.k + +b.dataset.pg); });
   stage.addEventListener('click', e => { const o = e.target.closest('[data-fopen]'), d = e.target.closest('[data-fdrive]'), x = e.target.closest('[data-fembed]'); if (o || d || x) { const it = items().find(i => i.id === e.target.closest('.it').dataset.id); if (it) x ? embedFileItem(it) : openFile(it.f, !!d); } });
 
