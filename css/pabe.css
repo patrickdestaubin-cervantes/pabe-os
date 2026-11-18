@@ -108,6 +108,9 @@ a.fin-tab{display:inline-flex;align-items:center;text-decoration:none}
 .tb-chips{display:flex;flex-wrap:wrap;gap:6px;padding:10px 0 2px}
 .tb-fchip{display:inline-flex;align-items:center;height:28px;border-radius:999px;background:color-mix(in srgb,#2383e2 10%,transparent);color:#1f6fc5;font-size:13px;padding:0 4px 0 11px}
 .tb-sortchip{background:var(--soft);color:var(--ink)}
+.tb-pinoff{background:transparent;border:1px dashed color-mix(in srgb,#2383e2 45%,var(--line));color:var(--mut);padding:0 10px;gap:4px}.tb-pinoff:hover{color:#1f6fc5;border-style:solid}
+.tb-pinoff .tb-ti{font-size:10px;opacity:.7}
+.tb-pinb{border-top:1px solid var(--line);margin-top:4px;color:var(--mut)}
 .tb-fchip .tb-x{margin-left:4px}
 .tb-x{width:20px;height:20px;border-radius:50%;display:inline-grid;place-items:center;font-size:14px;opacity:.6}.tb-x:hover{opacity:1;background:rgba(0,0,0,.06)}
 .tb-wrap{flex:1;overflow:auto;min-height:0;margin-top:6px}

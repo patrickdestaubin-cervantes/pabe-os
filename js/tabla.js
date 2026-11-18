@@ -49,6 +49,8 @@ export function createTable(el, cfg) {
   let P = {}; if (cfg.prefs) P = cfg.prefs; else { try { P = JSON.parse(localStorage.getItem(PK) || '{}'); } catch (e) {} }
   P = { order: [], hidden: [], widths: {}, names: {}, sort: cfg.defaultSort || null, filters: [], view: cfg.views?.[0]?.id || 'all', calc: {}, ...P };
   if (!P.order.length && cfg.defaultHidden) P.hidden = [...cfg.defaultHidden];
+  // Filtros fijos: siempre a la vista encima de la tabla (activos o no). cfg.defaultPins: [{ id: propiedad, tagName?: 'Plan semanal' }]
+  if (!P.pins) P.pins = (cfg.defaultPins || []).map((x, i) => ({ key: 'pin' + i, ...x }));
   const saveP = () => { if (cfg.savePrefs) { cfg.savePrefs(P); return; } try { localStorage.setItem(PK, JSON.stringify(P)); } catch (e) {} };
   let q = '', searchOpen = false, editing = null, pop = null, formId = null;
   const openRow = r => { if (!r) return; if (cfg.open) cfg.open(r); else { formId = String(r.id); render(); } };
@@ -109,6 +111,13 @@ export function createTable(el, cfg) {
       default: return norm(plain(r, p)).includes(norm(f.v || ''));
     }
   }
+  // etiqueta fija de un filtro fijo (por id o por nombre, p. ej. «Plan semanal»)
+  function pinTag(pin, p) {
+    if (p.tipo !== 'tags') return null;
+    if (pin.tag) return tagStore.get(p.sistema, pin.tag) || null;
+    if (pin.tagName) return tagStore.list(p.sistema).find(t => norm(t.nombre) === norm(pin.tagName)) || { nombre: pin.tagName };
+    return null;
+  }
   function filterLabel(p, f) {
     if (p.tipo === 'tags') return (f.v || []).map(id => tagStore.get(p.sistema, id)?.nombre).filter(Boolean).join(', ') || 'cualquiera';
     if (p.tipo === 'check') return f.v === 'si' ? 'sí' : 'no';
@@ -156,7 +165,13 @@ export function createTable(el, cfg) {
     if (editing) return;
     const vis = visible(), rs = rows();
     const views = cfg.views ? `<div class="tb-views">${cfg.views.map(v => `<button class="tb-view${P.view === v.id ? ' on' : ''}" data-view="${v.id}">${esc(v.nombre)}</button>`).join('')}</div>` : '<div class="tb-views"></div>';
-    const chips = P.filters.map((f, i) => { const p = allProps().find(x => x.id === f.id); return p ? `<span class="tb-fchip"><button data-fedit="${i}">${esc(p.nombre)}: ${esc(filterLabel(p, f))}</button><button class="tb-x" data-fdel="${i}" aria-label="Quitar filtro">×</button></span>` : ''; }).join('');
+    const pinChips = P.pins.map(pin => {
+      const p = allProps().find(x => x.id === pin.id); if (!p) return '';
+      const fi = P.filters.findIndex(f => f.pin === pin.key), f = P.filters[fi], tg = pinTag(pin, p);
+      if (f) return `<span class="tb-fchip tb-pinned"><button data-fedit="${fi}">${esc(p.nombre)}: ${esc(filterLabel(p, f))}</button><button class="tb-x" data-fdel="${fi}" aria-label="Quitar filtro">×</button></span>`;
+      return `<button class="tb-fchip tb-pinoff" data-pinon="${esc(pin.key)}">${tg ? `${esc(p.nombre)}: ${esc(tg.nombre || pin.tagName)}` : esc(p.nombre)}<span class="tb-ti">▾</span></button>`;
+    }).join('');
+    const chips = pinChips + P.filters.map((f, i) => { if (f.pin && P.pins.some(x => x.key === f.pin)) return ''; const p = allProps().find(x => x.id === f.id); return p ? `<span class="tb-fchip"><button data-fedit="${i}">${esc(p.nombre)}: ${esc(filterLabel(p, f))}</button><button class="tb-x" data-fdel="${i}" aria-label="Quitar filtro">×</button></span>` : ''; }).join('');
     const sortChip = P.sort ? (() => { const p = allProps().find(x => x.id === P.sort.id); return p ? `<span class="tb-fchip tb-sortchip"><button data-sortflip>${P.sort.dir > 0 ? '↑' : '↓'} ${esc(p.nombre)}</button><button class="tb-x" data-sortdel aria-label="Quitar orden">×</button></span>` : ''; })() : '';
     const fw = fitWidths(vis);
     const cw = p => P.widths[p.id] || fw[p.id] || (p.tipo === 'title' ? 260 : p.tipo === 'content' ? 320 : p.tipo === 'check' ? 90 : 170);
@@ -173,7 +188,7 @@ export function createTable(el, cfg) {
       ${searchOpen ? `<input class="tb-q" type="search" placeholder="Buscar" value="${esc(q)}">` : `<button class="tb-tool" data-search aria-label="Buscar">⌕</button>`}
       <button class="tb-tool" data-colsmenu aria-label="Columnas">⋯</button>
       ${cfg.newButton === false ? '' : `<button class="tb-new" data-new>${esc(cfg.newLabel || 'Nuevo')}</button>`}</div></div>
-     ${sel.size ? `<div class="tb-bulk"><b>${sel.size} ${sel.size === 1 ? 'seleccionada' : 'seleccionadas'}</b><button data-bprop>Editar propiedad</button>${cfg.duplicate ? '<button data-bdup>Duplicar</button>' : ''}<button data-bdel class="tb-danger">Eliminar</button><button class="tb-x" data-bclr aria-label="Quitar selección">×</button></div>` : chips || sortChip ? `<div class="tb-chips">${sortChip}${chips}</div>` : ''}
+     ${sel.size ? `<div class="tb-bulk"><b>${sel.size} ${sel.size === 1 ? 'seleccionada' : 'seleccionadas'}</b><button data-bprop>Editar propiedad</button>${cfg.duplicate ? '<button data-bdup>Duplicar</button>' : ''}<button data-bdel class="tb-danger">Eliminar</button><button class="tb-x" data-bclr aria-label="Quitar selección">×</button></div>` : chips || sortChip ? `<div class="tb-chips">${chips}${sortChip}</div>` : ''}
      <div class="tb-wrap"><table class="tb" style="width:${tw}px"><colgroup><col style="width:56px">${cols}<col></colgroup>
       <thead><tr><th class="tb-h"><label class="tb-sel"><input type="checkbox" class="tb-allchk" ${rs.length && rs.every(r => sel.has(String(r.id))) ? 'checked' : ''} aria-label="Seleccionar todas"></label></th>${head}<th class="tb-plus"><button data-addprop aria-label="Nueva propiedad">+</button></th></tr></thead>
       <tbody>${body}<tr class="tb-newrow"><td class="tb-h"></td><td colspan="${vis.length + 1}"><input class="tb-newin" placeholder="+ ${esc(cfg.newRow || 'Nueva')}" aria-label="Nuevo elemento"></td></tr></tbody>
@@ -327,18 +342,19 @@ export function createTable(el, cfg) {
     i.onkeydown = e => { if (e.key === 'Enter') ok(); };
     pop.onclick = e => { const b = e.target.closest('button'); if (!b) return; if (b.dataset.ty) { tipo = b.dataset.ty; pop.querySelectorAll('.tb-ty').forEach(x => x.classList.toggle('on', x === b)); } if ('ok' in b.dataset) ok(); };
   }
-  function addFilter(anchor, propId, idx) {
+  function addFilter(anchor, propId, idx, pinKey) {
     const props = allProps();
     if (!propId) { openPop(anchor, `<div class="tb-sub">Filtrar por</div>${props.map(p => `<button class="tb-pi" data-fp="${p.id}"><span class="tb-ti">${TYPES[p.tipo].i}</span> ${esc(p.nombre)}</button>`).join('')}`); pop.onclick = e => { const b = e.target.closest('[data-fp]'); if (b) { closePop(); addFilter(anchor, b.dataset.fp); } }; return; }
-    const p = props.find(x => x.id === propId), f = idx != null ? { ...P.filters[idx] } : { id: p.id };
+    const p = props.find(x => x.id === propId), f = idx != null ? { ...P.filters[idx] } : { id: p.id, ...(pinKey ? { pin: pinKey } : {}) };
     const apply = () => { if (idx != null) P.filters[idx] = f; else { P.filters.push(f); idx = P.filters.length - 1; } saveP(); render(); };
     let html = `<div class="tb-sub">${esc(p.nombre)}</div>`;
     if (p.tipo === 'tags') html += tagStore.list(p.sistema).map(t => `<button class="tb-pi" data-ft="${t.id}">${tagChip(t)}<em>${(f.v || []).includes(t.id) ? '✓' : ''}</em></button>`).join('') || '<p class="tb-mut tb-pad">No hay etiquetas.</p>';
     else if (p.tipo === 'check') html += `<button class="tb-pi" data-fv="si">Sí</button><button class="tb-pi" data-fv="no">No</button>`;
     else if (p.tipo === 'files') html += `<button class="tb-pi" data-fv="con">Con archivos</button><button class="tb-pi" data-fv="sin">Sin archivos</button>`;
-    else if (p.tipo === 'date') { const now = new Date(), m = (o) => { const d = new Date(now.getFullYear(), now.getMonth() + o, 1), e = new Date(d.getFullYear(), d.getMonth() + 1, 0); return [isoDay(d), isoDay(e)]; }; html += `<button class="tb-pi" data-fm="0">Este mes</button><button class="tb-pi" data-fm="-1">Mes pasado</button><button class="tb-pi" data-fm="1">Mes que viene</button><div class="tb-dr"><label>Desde<input type="date" class="tb-in2" data-from value="${f.from || ''}"></label><label>Hasta<input type="date" class="tb-in2" data-to value="${f.to || ''}"></label></div><button class="tb-btn" data-fok>Aplicar</button>`; }
+    else if (p.tipo === 'date') { const now = new Date(), m = (o) => { const d = new Date(now.getFullYear(), now.getMonth() + o, 1), e = new Date(d.getFullYear(), d.getMonth() + 1, 0); return [isoDay(d), isoDay(e)]; }; html += `<button class="tb-pi" data-fw="0">Esta semana</button><button class="tb-pi" data-fw="7">Últimos 7 días</button><button class="tb-pi" data-fm="0">Este mes</button><button class="tb-pi" data-fm="-1">Mes pasado</button><button class="tb-pi" data-fm="1">Mes que viene</button><div class="tb-dr"><label>Desde<input type="date" class="tb-in2" data-from value="${f.from || ''}"></label><label>Hasta<input type="date" class="tb-in2" data-to value="${f.to || ''}"></label></div><button class="tb-btn" data-fok>Aplicar</button>`; }
     else if (p.tipo === 'number' || p.tipo === 'money') html += `<div class="tb-dr"><select class="tb-in2" data-op><option value="=">igual a</option><option value=">">mayor que</option><option value="<">menor que</option></select><input class="tb-in2" data-fval inputmode="decimal" value="${esc(f.v ?? '')}"></div><button class="tb-btn" data-fok>Aplicar</button>`;
     else html += `<input class="tb-rn" data-fval placeholder="Contiene…" value="${esc(f.v ?? '')}"><button class="tb-btn" data-fok>Aplicar</button>`;
+    html += `<button class="tb-pi tb-pinb" data-fpin>${f.pin ? 'Quitar de filtros fijos' : '📌 Fijar este filtro arriba'}</button>`;
     openPop(anchor, html, true);
     if (pop.querySelector('[data-op]') && f.op) pop.querySelector('[data-op]').value = f.op;
     pop.querySelector('[data-fval]')?.focus();
@@ -347,6 +363,8 @@ export function createTable(el, cfg) {
       const b = e.target.closest('button'); if (!b) return;
       if (b.dataset.ft) { f.v = (f.v || []).includes(b.dataset.ft) ? f.v.filter(x => x !== b.dataset.ft) : [...(f.v || []), b.dataset.ft]; apply(); b.querySelector('em').textContent = f.v.includes(b.dataset.ft) ? '✓' : ''; }
       if (b.dataset.fv) { f.v = b.dataset.fv; apply(); closePop(); }
+      if (b.dataset.fw) { const now = new Date(); let a; if (b.dataset.fw === '7') a = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6); else a = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (now.getDay() + 6) % 7); const z = b.dataset.fw === '7' ? now : new Date(a.getFullYear(), a.getMonth(), a.getDate() + 6); f.from = isoDay(a); f.to = isoDay(z); apply(); closePop(); }
+      if ('fpin' in b.dataset) { if (!f.pin) { const key = 'pin' + Date.now().toString(36); const pin = { key, id: p.id }; if (p.tipo === 'tags' && f.v?.length === 1) pin.tag = f.v[0]; P.pins.push(pin); f.pin = key; apply(); } else { P.pins = P.pins.filter(x => x.key !== f.pin); delete f.pin; if (idx != null) apply(); else { saveP(); render(); } } closePop(); }
       if (b.dataset.fm) { const now = new Date(), o = +b.dataset.fm, d = new Date(now.getFullYear(), now.getMonth() + o, 1), e2 = new Date(d.getFullYear(), d.getMonth() + 1, 0); f.from = isoDay(d); f.to = isoDay(e2); apply(); closePop(); }
       if ('fok' in b.dataset) { const fv = pop.querySelector('[data-fval]'), op = pop.querySelector('[data-op]'), fr = pop.querySelector('[data-from]'), to = pop.querySelector('[data-to]'); if (fv) f.v = fv.value; if (op) f.op = op.value; if (fr) { f.from = fr.value; f.to = to.value; } apply(); closePop(); }
     };
@@ -417,6 +435,12 @@ export function createTable(el, cfg) {
     if (b && 'new' in b.dataset) { const r = cfg.create(''); render(); const td = el.querySelector(`tr[data-row="${CSS.escape(String(r.id))}"] td.tb-title`); if (td) startEdit(td); return; }
     if (b && 'addprop' in b.dataset) return addProp(b);
     if (b?.dataset.fedit) { const f = P.filters[+b.dataset.fedit]; return addFilter(b, f.id, +b.dataset.fedit); }
+    if (b?.dataset.pinon) {
+      const pin = P.pins.find(x => x.key === b.dataset.pinon), p = pin && allProps().find(x => x.id === pin.id); if (!p) return;
+      const tg = pinTag(pin, p);
+      if (tg) { let id = tg.id; if (!id) id = tagStore.add(p.sistema, pin.tagName, pickColor(p.sistema)).id; P.filters.push({ id: p.id, v: [id], pin: pin.key }); saveP(); render(); return; }
+      return addFilter(b, p.id, null, pin.key);
+    }
     if (b?.dataset.fdel) { P.filters.splice(+b.dataset.fdel, 1); saveP(); render(); return; }
     if (b && 'sortflip' in b.dataset) { P.sort.dir *= -1; saveP(); render(); return; }
     if (b && 'sortdel' in b.dataset) { P.sort = null; saveP(); render(); return; }

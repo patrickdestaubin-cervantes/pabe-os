@@ -890,6 +890,7 @@ function buildTable() {
     key: 'notas', newButton: false, newRow: 'Nueva nota', empty: 'Aún no hay notas. Escribe o dibuja en el lienzo y se guardan solas.',
     defaultHidden: ['updated'],
     cardProps: ['area', 'content', 'created'],
+    defaultPins: [{ id: 'created' }, { id: 'area', tagName: 'Plan semanal' }], // filtros fijos arriba (se cambian desde el propio filtro: 📌)
     fit: ['created', 'title', 'area', 'content'], // en tablet y ordenador, estas cuatro siempre a la vista // en el móvil: título, área y contenido primero
     views: [{ id: 'all', nombre: 'Todas' }, { id: 'recent', nombre: 'Últimos 7 días', filter: r => Date.now() - (r.updated || r.created) < 7 * 864e5 }, { id: 'files', nombre: 'Con archivos', filter: r => (r.files || []).length > 0 }],
     props: () => [
