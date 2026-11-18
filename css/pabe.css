@@ -417,3 +417,5 @@ path.mk{mix-blend-mode:multiply}@media (prefers-color-scheme:dark){path.mk{mix-b
 .dia-add .btn{height:44px;border-radius:12px}
 .dia-foot{font-size:13px;margin-top:12px}.dia-foot a{color:inherit}
 @media (max-width:600px){.mod .bdg{right:-2px}.dia-it{padding:12px 12px;gap:12px}}
+.nt-copytx{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(78px + env(safe-area-inset-bottom));z-index:60;display:flex;align-items:center;gap:10px;max-width:min(520px,calc(100vw - 32px));padding:10px 14px;border-radius:12px;background:var(--ink);color:var(--bg);box-shadow:var(--shadow);font-size:14px}
+.nt-copytx span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;opacity:.8}.nt-copytx em{font-style:normal;font-weight:600;color:#7cb7ff}

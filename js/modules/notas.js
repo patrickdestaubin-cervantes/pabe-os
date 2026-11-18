@@ -2,6 +2,7 @@
 import { collection, tags, files, on, syncNow } from '../store.js';
 import { createTable, pickColor, tagChip, PALETTE } from '../tabla.js';
 import { plainClick, fitPop } from '../ui.js';
+import { agente } from '../agente.js';
 import { createSheet, importWorkbook, exportWorkbook, sheetFromRows, sheetTSV, newSheet, fmtVal } from '../hoja.js';
 const TXT = 18; // tamaño de letra estándar de todos los cuadros de texto
 
@@ -48,6 +49,7 @@ const HTML = `
  <button class="tl" id="ntInsTable" title="Insertar tabla" aria-label="Insertar tabla"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M3.5 9.5h17M3.5 14.5h17M9.5 9.5v10"/></svg></button>
  <button class="tl" id="ntLasso" title="Seleccionar: rodea texto, dibujos o imágenes para copiar, mover o duplicar" aria-label="Seleccionar"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-dasharray="2.6 2.6"><path d="M12 4c5 0 8.5 2.4 8.5 5.5S17 15 12 15s-8.5-2.4-8.5-5.5S7 4 12 4z"/><path d="M6 13.5c-1.2 1.5-1 4 1.5 5.5" stroke-dasharray="none"/></svg></button>
  <button class="tl" id="ntEraser" title="Borrador (el botón del lápiz también borra)" aria-label="Borrador"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M8 20h12M4.5 14.5l9-9a2 2 0 0 1 3 0l2 2a2 2 0 0 1 0 3l-8 8H8z"/></svg></button>
+ <button class="tl" id="ntTidy" title="Ordenar la letra a mano" aria-label="Ordenar la letra a mano"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M4 7h11M4 12h16M4 17h9"/><path d="M19 4v5M17 7l2 2 2-2" /></svg></button>
  <button class="tl" id="ntShapes" aria-label="Reconocer formas"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8.5" cy="8.5" r="4.5"/><rect x="12" y="12" width="8" height="8" rx="1"/></svg></button>
  <span class="sepr"></span>
  <label class="tl" title="Adjuntar archivo o imagen" aria-label="Adjuntar"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M20 11.5l-8 8a5 5 0 0 1-7-7l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7L9.7 17.2a1.7 1.7 0 0 1-2.4-2.4L15 7"/></svg><input type="file" id="ntFile" multiple hidden></label>
@@ -67,7 +69,7 @@ const HTML = `
 const items = () => cur.doc.tabs[cur.tab];
 function isBlank() { return !cur.meta.title.trim() && !cur.meta.tags.length && Object.values(cur.doc.tabs).every(a => !a.length); }
 let saveT;
-function dirty() { clearTimeout(saveT); saveT = setTimeout(saveNow, 600); }
+function dirty() { clearTimeout(saveT); saveT = setTimeout(saveNow, 600); scheduleHW(); }
 // lo último que escribiste o tocaste (para volver ahí al abrir la nota)
 const markLast = id => { if (cur && id) cur.doc.last = { tab: cur.tab, id }; };
 // Título automático: el primer párrafo del primer cuadro de texto, salvo que lo hayas escrito tú a mano
@@ -77,20 +79,129 @@ function autoTitle() {
   const t = first ? first.s.trim().split('\n')[0].replace(/^\s*•\s*/, '').trim().slice(0, 90) : '';
   if (t !== cur.meta.title) { cur.meta.title = t; const inp = $('#ntTitle'); if (inp && document.activeElement !== inp) inp.value = t; }
 }
+// Texto de la nota (para buscar, la columna Contenido y el asistente): lo tecleado, tablas, hojas y la letra a mano ya transcrita
+function noteText(m, doc) {
+  const all = m.tabs.flatMap(t => doc.tabs[t.id] || []);
+  const typed = all.filter(i => (i.t === 'x' && i.s.trim()) || i.t === 'tb' || i.t === 'xl').map(i => i.t === 'tb' ? [(i.n || 'Tabla'), ...(i.rows || []).map(r => r.title)].join(', ') : i.t === 'xl' ? xlPreview(i) : i.s.trim());
+  const hand = m.tabs.map(t => doc.hw?.[t.id]?.text).filter(Boolean).map(x => x.replace(/\s*\n\s*/g, ' · '));
+  return [...hand, ...typed].join(' · ').slice(0, 3000);
+}
 function saveNow() {
   clearTimeout(saveT); if (!cur) return;
   autoTitle();
   if (!cur.saved && isBlank()) return; if (!cur.saved) { cur.saved = true; setHash(); }
   const m = cur.meta, all = m.tabs.flatMap(t => (cur.doc.tabs[t.id] || []).map(i => ({ ...i, tab: t.id })));
-  m.text = all.filter(i => (i.t === 'x' && i.s.trim()) || i.t === 'tb' || i.t === 'xl').map(i => i.t === 'tb' ? [(i.n || 'Tabla'), ...(i.rows || []).map(r => r.title)].join(', ') : i.t === 'xl' ? xlPreview(i) : i.s.trim()).join(' · ').slice(0, 3000);
+  m.text = noteText(m, cur.doc);
   m.files = all.flatMap(i => [i.f, i.fx].filter(Boolean).map(f => ({ ...f, tab: i.tab, item: i.id })));
   m.ink = all.some(i => i.t === 's');
   col.put(clone(m), clone(cur.doc));
 }
 
+
+/* =================== letra a mano → texto (con Claude) ===================
+   · Con el lazo: al rodear letra a mano se copia sola como texto (para pegarla en WhatsApp, correo…).
+   · En segundo plano: cada hoja con letra a mano se transcribe sola (unos segundos después de dejar de escribir)
+     y ese texto entra en la búsqueda, la columna Contenido y el asistente. */
+const HW_SYS = 'Eres un transcriptor. Transcribe exactamente el texto manuscrito de las imágenes (normalmente en español, a veces en inglés o francés), en orden de arriba abajo; las imágenes son trozos consecutivos de la misma hoja. Respeta los saltos de línea. Las viñetas escríbelas como "• ". Corrige solo lo imprescindible para que sean palabras reales. No añadas comentarios, títulos, comillas ni explicaciones. Ignora dibujos y garabatos. Si no hay texto legible, responde con una cadena vacía.';
+const blobB64 = b => new Promise((ok, ko) => { const f = new FileReader(); f.onload = () => ok(String(f.result).split(',')[1]); f.onerror = ko; f.readAsDataURL(b); });
+// Parte los trazos en franjas horizontales (por los huecos entre renglones) para que cada imagen se lea bien
+function bands(list, maxH = 700) {
+  const ord = list.map(i => ({ i, b: bboxOf(i) })).sort((a, b) => a.b.y1 - b.b.y1), out = []; let c = null;
+  for (const o of ord) {
+    const nh = c ? Math.max(c.y2, o.b.y2) - c.y1 : 0;
+    if (c && (nh <= maxH || (o.b.y1 < c.y2 && nh <= maxH * 1.6))) { c.items.push(o.i); c.y2 = Math.max(c.y2, o.b.y2); }
+    else { c = { y1: o.b.y1, y2: o.b.y2, items: [o.i] }; out.push(c); }
+  }
+  return out.map(b => b.items);
+}
+async function readHand(list) {
+  const parts = bands(list).slice(0, 12), content = [];
+  for (const part of parts) content.push({ type: 'image', source: { type: 'base64', media_type: 'image/png', data: await blobB64(await renderPng(part, 1500)) } });
+  content.push({ type: 'text', text: 'Transcribe el texto manuscrito.' });
+  const t = await agente.once({ system: HW_SYS, content, max_tokens: 3000 });
+  return t.replace(/^["“]|["”]$/g, '').trim();
+}
+function hwError(e) { const m = String(e?.message || e); return m === 'sin-clave' ? 'Para leer tu letra, pon tu clave de Claude en el asistente (✦ → ⚙)' : m === 'api-401' ? 'La clave de Claude no es válida (✦ → ⚙)' : m === 'api-429' ? 'Claude está ocupado o sin saldo; prueba en un momento' : 'No he podido leer la letra (¿sin conexión?)'; }
+// Lazo → copiar como texto, sin pulsar nada más
+function copyHandText(list, quiet) {
+  const ink = list.filter(i => i.t === 's'); if (!ink.length) return;
+  const typed = list.filter(i => i.t === 'x').sort((a, b) => a.y - b.y).map(i => i.s).join('\n');
+  const p = agente.ensureKey().then(ok => { if (!ok) throw new Error('sin-clave'); return readHand(ink); }).then(t => [t, typed].filter(Boolean).join('\n'));
+  let w = null;
+  try { if (window.ClipboardItem && navigator.clipboard?.write) w = navigator.clipboard.write([new ClipboardItem({ 'text/plain': p.then(t => new Blob([t], { type: 'text/plain' })) })]); } catch (_) {}
+  if (!w) w = Promise.reject(new Error('no-clip')); w.catch(() => {});
+  if (!quiet) flash('Leyendo tu letra…');
+  Promise.allSettled([p, w]).then(([a, b]) => {
+    if (a.status === 'rejected') return flash(hwError(a.reason));
+    const t = a.value; if (!t) return flash('No he encontrado texto escrito ahí');
+    if (clip) clip._txt = t;
+    if (b.status === 'fulfilled') flash('Copiado como texto: «' + t.replace(/\s+/g, ' ').slice(0, 50) + (t.length > 50 ? '…' : '') + '»');
+    else offerCopy(t);
+  });
+}
+// Si el navegador no dejó copiar solo (pasa en algunos), un toque en el aviso lo copia
+function offerCopy(t) {
+  let b = document.getElementById('ntCopyTx'); if (!b) { b = document.createElement('button'); b.id = 'ntCopyTx'; b.className = 'nt-copytx'; document.body.appendChild(b); }
+  b.innerHTML = `<b>Texto listo</b><span>${esc(t.replace(/\s+/g, ' ').slice(0, 60))}</span><em>Copiar</em>`; b.hidden = false;
+  b.onclick = async () => { try { await navigator.clipboard.writeText(t); flash('Copiado como texto'); } catch (_) { flash('No se ha podido copiar'); } b.hidden = true; };
+  clearTimeout(b._t); b._t = setTimeout(() => { b.hidden = true; }, 12000);
+}
+// Transcripción en segundo plano de cada hoja que cambió
+const sigOf = a => { let h = 0; for (const i of a) { const k = i.id + ':' + i.p.length + ':' + Math.round(i.p[0]) + ':' + Math.round(i.p[1]); for (let j = 0; j < k.length; j++) h = (h * 31 + k.charCodeAt(j)) | 0; } return a.length + '-' + h; };
+let hwT = null, hwBusy = false;
+function scheduleHW() { clearTimeout(hwT); hwT = setTimeout(() => transcribe(), 12000); }
+async function transcribe(target) {
+  const c = target || cur; if (!c || !c.saved || hwBusy || !agente.hasKey() || !navigator.onLine) return;
+  const id = c.meta.id, jobs = [];
+  for (const t of c.meta.tabs) { const ink = (c.doc.tabs[t.id] || []).filter(i => i.t === 's' && i.k !== 'mark'); const sig = sigOf(ink); if (sig !== (c.doc.hw?.[t.id]?.sig || '0-0')) jobs.push({ tab: t.id, ink: clone(ink), sig }); }
+  if (!jobs.length) return; hwBusy = true;
+  try {
+    const res = [];
+    for (const j of jobs) res.push({ ...j, text: j.ink.length ? await readHand(j.ink) : '' });
+    const apply = doc => { doc.hw = doc.hw || {}; res.forEach(r => { doc.hw[r.tab] = { sig: r.sig, text: r.text }; }); };
+    if (cur && cur.meta.id === id) { apply(cur.doc); saveNow(); if (!$('#ntLibPanel').hidden) table.render(); }
+    else { const doc = await col.load(id), m = col.index.get(id); if (doc && m) { apply(doc); const mm = clone(m); mm.text = noteText(mm, doc); await col.put(mm, doc); } }
+  } catch (e) { console.warn('transcripción', e); }
+  finally { hwBusy = false; }
+}
+
+
+/* =================== ordenar la letra a mano ===================
+   Renglones a la misma distancia y letras del mismo tamaño, sin cambiar tu letra (los trazos se escalan y se mueven).
+   Lo tecleado, las imágenes y las tablas se mueven con el renglón que tienen encima. Se deshace con ↶. */
+function tidyHand(only) {
+  const all = items(), pool = (only && only.length ? only : all);
+  const strokes = pool.filter(i => i.t === 's' && i.k !== 'mark' && !i.sh);
+  if (strokes.length < 3) return flash('No hay letra a mano para ordenar');
+  const info = strokes.map(i => ({ i, b: bboxOf(i) })).map(o => ({ ...o, h: o.b.y2 - o.b.y1, cy: (o.b.y1 + o.b.y2) / 2 }));
+  const med = a => { const s = [...a].sort((x, y) => x - y); return s.length ? s[s.length >> 1] : 0; };
+  const H = med(info.filter(o => o.h > 4).map(o => o.h)) || 20;
+  // 1) agrupar en renglones por altura (los puntos y tildes van con el renglón más cercano)
+  const big = info.filter(o => o.h >= H * .45).sort((a, b) => a.cy - b.cy), lines = [];
+  for (const o of big) { const L0 = lines[lines.length - 1]; if (L0 && o.cy - L0.cy < Math.max(H, L0.h) * .62) { L0.m.push(o); L0.cy = med(L0.m.map(x => x.cy)); L0.h = med(L0.m.map(x => x.h)); } else lines.push({ m: [o], cy: o.cy, h: o.h }); }
+  if (!lines.length) return flash('No hay letra a mano para ordenar');
+  for (const o of info) if (o.h < H * .45) { let best = lines[0]; for (const L0 of lines) if (Math.abs(L0.cy - o.cy) < Math.abs(best.cy - o.cy)) best = L0; best.m.push(o); }
+  lines.forEach(L0 => { const bs = L0.m.filter(o => o.h >= H * .45); L0.x1 = Math.min(...L0.m.map(o => o.b.x1)); L0.top = med(bs.map(o => o.b.y1)); L0.base = med(bs.map(o => o.b.y2)); L0.h = Math.max(4, L0.base - L0.top); });
+  lines.sort((a, b) => a.base - b.base);
+  // 2) tamaño común y paso entre renglones (los párrafos separados siguen separados)
+  const T = med(lines.map(L0 => L0.h)), step = T * 1.85;
+  const gaps = lines.slice(1).map((L0, k) => L0.base - lines[k].base), normal = med(gaps) || step;
+  snap();
+  let base = lines[0].base; const moves = [];
+  lines.forEach((L0, k) => {
+    if (k) base += gaps[k - 1] > normal * 1.7 ? step * 2 : step;
+    const f = Math.max(.6, Math.min(1.6, T / L0.h)), ax = L0.x1, ay = L0.base, dy = base - ay;
+    for (const o of L0.m) { const st = o.i.v === 2 ? 3 : 2, p = o.i.p; for (let j = 0; j < p.length; j += st) { p[j] = rd(ax + (p[j] - ax) * f); p[j + 1] = rd(base + (p[j + 1] - ay) * f); } }
+    moves.push({ y: ay, dy });
+  });
+  // 3) lo que no es letra a mano baja o sube con el renglón que tiene encima
+  if (!only || !only.length) all.filter(i => i.t !== 's').forEach(i => { let m = null; for (const mv of moves) if (mv.y <= i.y + 4) m = mv; if (m) i.y = rd(i.y + m.dy); });
+  renderItems(); dirty(); flash('Letra ordenada · ↶ para deshacer');
+}
+
 /* =================== abrir / nueva =================== */
 export function newNote() {
-  flushXlsx(); saveNow(); const t = gid();
+  flushXlsx(); saveNow(); if (cur?.saved) { clearTimeout(hwT); transcribe(cur); } const t = gid();
   cur = { meta: { id: gid(), title: '', tags: [], tabs: [{ id: t, name: 'Hoja 1' }], created: Date.now(), updated: Date.now(), text: '', files: [], valores: {} }, doc: { tabs: { [t]: [] } }, saved: false, tab: t };
   hist = []; redo = []; sel = new Set(); hideMenu(); hideCaret(); resetCam(); renderNote(); setHash();
 }
@@ -99,7 +210,7 @@ function setHash() { if (!active() || !cur) return; const h = '#notas' + (cur.sa
 async function openNote(id, focus) {
   const m = col.index.get(id); if (!m) return;
   if (!cur || cur.meta.id !== id) {
-    flushXlsx(); saveNow();
+    flushXlsx(); saveNow(); if (cur?.saved) { clearTimeout(hwT); transcribe(cur); }
     const doc = (await col.load(id)) || { tabs: {} };
     m.tabs.forEach(t => { doc.tabs[t.id] = doc.tabs[t.id] || []; });
     cur = { meta: clone(m), doc: clone(doc), saved: true, tab: m.tabs[0].id };
@@ -274,7 +385,7 @@ function lassoSelect(P) {
     const b = bboxOf(i); return inPoly((b.x1 + b.x2) / 2, (b.y1 + b.y2) / 2, P);
   });
   sel = new Set(found.map(i => i.id)); lasso = false; syncTools(); markSel();
-  if (found.length) showMenu('sel'); else flash('No hay nada dentro del lazo');
+  if (found.length) { showMenu('sel'); clip = { items: clone(found) }; copyHandText(found); } else flash('No hay nada dentro del lazo');
 }
 
 /* ---------- menú flotante ---------- */
@@ -287,6 +398,7 @@ function showMenu(kind, pt) {
     if (!list.length) return hideMenu();
     if (one?.t === 'x') b.push(['edit', 'Editar']);
     b.push(['copy', 'Copiar'], ['cut', 'Cortar'], ['dup', 'Duplicar']);
+    if (list.some(i => i.t === 's')) b.push(['copytx', 'Copiar como texto'], ['tidy', 'Ordenar letra']);
     if (one?.t === 'f' && SHEET_RE.test(one.f.n)) b.push(['embed', 'Abrir como hoja']);
     if (one?.t === 'xl') b.push(['xlsx', 'Descargar Excel']);
     if (list.length < items().length) b.push(['all', 'Todo']);
@@ -311,6 +423,8 @@ function menuAction(k) {
   const w = menuW; hideMenu();
   if (k === 'edit') { const it = selItems()[0], el = it && itemsEl.querySelector(`[data-id="${it.id}"]`); if (el) edit(el); }
   if (k === 'copy') copySel(false);
+  if (k === 'copytx') copyHandText(selItems());
+  if (k === 'tidy') tidyHand(selItems());
   if (k === 'cut') copySel(true);
   if (k === 'dup') dupSel();
   if (k === 'del') delSel();
@@ -351,9 +465,9 @@ function copySel(cut) {
   flash(cut ? 'Cortado' : visual ? 'Copiado (también como imagen, para pegarlo en otras apps)' : 'Copiado');
 }
 // Dibuja la selección en una imagen PNG (fondo blanco) para pegarla en WhatsApp, correo, Word, Notas…
-function renderPng(list) {
+function renderPng(list, maxPx = 4000) {
   const prep = [...list.filter(i => i.t !== 's'), ...list.filter(i => i.t === 's')].map(i => { const el = itemsEl.querySelector(`[data-id="${i.id}"]`); return { i, b: bboxOf(i), el, img: el?.querySelector('img'), tsv: (i.t === 'tb' || i.t === 'xl') ? itemTSV(i) : '' }; });
-  const bb = unionBox(prep.map(p => p.b)), pad = 20, W = bb.x2 - bb.x1 + 2 * pad, H = bb.y2 - bb.y1 + 2 * pad, k = Math.min(2, 4000 / Math.max(W, H));
+  const bb = unionBox(prep.map(p => p.b)), pad = 20, W = bb.x2 - bb.x1 + 2 * pad, H = bb.y2 - bb.y1 + 2 * pad, k = Math.min(2, maxPx / Math.max(W, H));
   const cw0 = Math.ceil(W * k), ch0 = Math.ceil(H * k);
   const pr = (async () => {
     const cv = document.createElement('canvas'); cv.width = cw0; cv.height = ch0;
@@ -1021,6 +1135,7 @@ export async function mount(el, opts = {}) {
     if (b.dataset.k) { kind = b.dataset.k; eraser = false; lasso = false; L.set('kind', kind); syncTools(); toggleSizePop(b); return; }
     if (b.id === 'ntColor') { togglePenPop(); return; }
     if (b.id === 'ntEraser') { eraser = !eraser; lasso = false; }
+    if (b.id === 'ntTidy') { tidyHand(sel.size ? selItems() : null); return; }
     if (b.id === 'ntShapes') { shapes = !shapes; L.set('shapes', shapes); flash(shapes ? 'Formas: se convierten en limpias' : 'Formas: se quedan a mano'); }
     if (b.id === 'ntText') { addText(caretW || lastW || centerW()); return; }
     if (b.id === 'ntInsTable') { addTable(caretW || lastW || centerW()); return; }
@@ -1114,7 +1229,7 @@ export function route(sub) {
   if (col.index.get(sub)) { pendingId = null; return openNote(sub); }
   pendingId = sub; // aún no ha llegado de la nube: se abre en cuanto llegue
 }
-export function leave() { flushXlsx(); saveNow(); hideMenu(); }
+export function leave() { flushXlsx(); saveNow(); hideMenu(); if (cur?.saved) { clearTimeout(hwT); transcribe(cur); } }
 
 /* =================== herramientas para el asistente =================== */
 const fmt = new Intl.DateTimeFormat('es-ES', { day: 'numeric', month: 'short', year: 'numeric' });

@@ -47,6 +47,19 @@ let busy = false, rec = null, listening = false, spokeIt = false;
 export const agente = {
   register(id, def) { modules[id] = def; },
   setCurrent(fn) { currentModule = fn; },
+  hasKey: () => !!L.get('key', ''),
+  ensureKey: async () => { if (!L.get('key', '')) await pullSettings(); return !!L.get('key', ''); },
+  // Una sola petición a Claude (sin herramientas), p. ej. para leer letra a mano en una imagen
+  async once({ content, system = '', max_tokens = 2000, model }) {
+    const key = L.get('key', ''); if (!key) throw new Error('sin-clave');
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+      body: JSON.stringify({ model: model || L.get('model', MODELS[0][0]), max_tokens, ...(system ? { system } : {}), messages: [{ role: 'user', content }] })
+    });
+    if (!r.ok) throw new Error('api-' + r.status);
+    const j = await r.json(); return (j.content || []).filter(c => c.type === 'text').map(c => c.text).join('').trim();
+  },
 };
 
 function allTools() {
@@ -65,7 +78,7 @@ Reglas:
 - Responde en español, breve y directo (2–4 frases): muchas respuestas se leen en voz alta.
 - Para cualquier dato de Patrick usa las herramientas; no inventes. Si no encuentras algo, dilo.
 - Puedes crear, abrir y etiquetar notas cuando te lo pida. No borres nada.
-- Lo escrito a mano en el lienzo no lo puedes leer todavía; solo el texto tecleado, títulos, áreas y nombres de archivos.`;
+- Lo escrito a mano en las notas se transcribe solo en segundo plano y lo ves como texto en el contenido de la nota (puede tardar un poco en estar al día).`;
 }
 
 async function callClaude() {
