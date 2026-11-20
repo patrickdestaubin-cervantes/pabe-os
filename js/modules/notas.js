@@ -189,34 +189,77 @@ async function transcribe(target) {
 /* =================== ordenar la letra a mano ===================
    Renglones a la misma distancia y letras del mismo tamaño, sin cambiar tu letra (los trazos se escalan y se mueven).
    Lo tecleado, las imágenes y las tablas se mueven con el renglón que tienen encima. Se deshace con ↶. */
-function tidyHand(only) {
+function tidyHand(only, quiet) {
   const all = items(), pool = (only && only.length ? only : all);
   const strokes = pool.filter(i => i.t === 's' && i.k !== 'mark' && !i.sh);
-  if (strokes.length < 3) return flash('No hay letra a mano para ordenar');
+  if (strokes.length < 3) { flash('No hay letra a mano para ordenar'); return null; }
   const info = strokes.map(i => ({ i, b: bboxOf(i) })).map(o => ({ ...o, h: o.b.y2 - o.b.y1, cy: (o.b.y1 + o.b.y2) / 2 }));
   const med = a => { const s = [...a].sort((x, y) => x - y); return s.length ? s[s.length >> 1] : 0; };
   const H = med(info.filter(o => o.h > 4).map(o => o.h)) || 20;
   // 1) agrupar en renglones por altura (los puntos y tildes van con el renglón más cercano)
   const big = info.filter(o => o.h >= H * .45).sort((a, b) => a.cy - b.cy), lines = [];
   for (const o of big) { const L0 = lines[lines.length - 1]; if (L0 && o.cy - L0.cy < Math.max(H, L0.h) * .62) { L0.m.push(o); L0.cy = med(L0.m.map(x => x.cy)); L0.h = med(L0.m.map(x => x.h)); } else lines.push({ m: [o], cy: o.cy, h: o.h }); }
-  if (!lines.length) return flash('No hay letra a mano para ordenar');
+  if (!lines.length) { flash('No hay letra a mano para ordenar'); return null; }
   for (const o of info) if (o.h < H * .45) { let best = lines[0]; for (const L0 of lines) if (Math.abs(L0.cy - o.cy) < Math.abs(best.cy - o.cy)) best = L0; best.m.push(o); }
   lines.forEach(L0 => { const bs = L0.m.filter(o => o.h >= H * .45); L0.x1 = Math.min(...L0.m.map(o => o.b.x1)); L0.top = med(bs.map(o => o.b.y1)); L0.base = med(bs.map(o => o.b.y2)); L0.h = Math.max(4, L0.base - L0.top); });
   lines.sort((a, b) => a.base - b.base);
-  // 2) tamaño común y paso entre renglones (los párrafos separados siguen separados)
-  const T = med(lines.map(L0 => L0.h)), step = T * 1.85;
+  // 2) tamaño común y paso entre renglones, sobre los puntos del lienzo (cada 24): mínimo dos puntos entre renglones;
+  //    los párrafos separados siguen separados
+  const G = 24, T = med(lines.map(L0 => L0.h)), step = Math.max(2 * G, Math.ceil(T * 1.9 / G) * G);
   const gaps = lines.slice(1).map((L0, k) => L0.base - lines[k].base), normal = med(gaps) || step;
   snap();
-  let base = lines[0].base; const moves = [];
+  let base = Math.round(lines[0].base / G) * G; const moves = [];
   lines.forEach((L0, k) => {
     if (k) base += gaps[k - 1] > normal * 1.7 ? step * 2 : step;
+    L0.nb = base;
     const f = Math.max(.6, Math.min(1.6, T / L0.h)), ax = L0.x1, ay = L0.base, dy = base - ay;
     for (const o of L0.m) { const st = o.i.v === 2 ? 3 : 2, p = o.i.p; for (let j = 0; j < p.length; j += st) { p[j] = rd(ax + (p[j] - ax) * f); p[j + 1] = rd(base + (p[j + 1] - ay) * f); } }
     moves.push({ y: ay, dy });
   });
   // 3) lo que no es letra a mano baja o sube con el renglón que tiene encima
   if (!only || !only.length) all.filter(i => i.t !== 's').forEach(i => { let m = null; for (const mv of moves) if (mv.y <= i.y + 4) m = mv; if (m) i.y = rd(i.y + m.dy); });
-  renderItems(); dirty(); flash('Letra ordenada · ↶ para deshacer');
+  lines[0].nb = lines[0].nb ?? Math.round(lines[0].base / G) * G;
+  renderItems(); dirty(); if (!quiet) flash('Letra ordenada · ↶ para deshacer');
+  return { lines: lines.map(L0 => ({ base: L0.nb, x1: L0.x1, ids: L0.m.map(o => o.i.id) })), T, step };
+}
+
+// «Ordenar»: renglones a la distancia justa y, si tienes tu alfabeto, la letra reescrita con TU letra registrada
+// (lee lo escrito y lo vuelve a escribir en el mismo sitio con tus letras bonitas). Con el lazo, solo lo seleccionado.
+let tidying = false;
+async function tidyAll(only) {
+  if (tidying) return; tidying = true;
+  try {
+    const r = tidyHand(only, true); if (!r) return;
+    await loadGlyphs();
+    const ink = r.lines.flatMap(L0 => L0.ids).map(id => items().find(i => i.id === id)).filter(Boolean);
+    if (Object.keys(glyphs).length < 20 || !(await agente.ensureKey())) {
+      flash(Object.keys(glyphs).length < 20 ? 'Renglones ordenados · para pasarla a tu letra, enséñame tu alfabeto (mantén pulsado el micrófono)' : 'Renglones ordenados · para pasarla a tu letra, pon tu clave de Claude (✦ → ⚙)');
+      return;
+    }
+    flash('Pasando a tu letra…');
+    let text;
+    try { text = await readHand(ink); } catch (e) { return flash('Renglones ordenados · ' + hwError(e)); }
+    const tl = text.split('\n').map(x => x.replace(/^\s*•\s*/, '• ').trim()).filter(Boolean);
+    if (!tl.length) return flash('Renglones ordenados · no he encontrado texto que pasar a tu letra');
+    // quitar la letra original (solo la que se ha leído)
+    const gone = new Set(ink.map(i => i.id)), keep = items().filter(i => !gone.has(i.id));
+    items().length = 0; items().push(...keep);
+    const Hc = Math.max(16, Math.min(48, r.T));
+    const cnt = {}; ink.forEach(i => { cnt[i.c] = (cnt[i.c] || 0) + 1; }); const col0 = Object.keys(cnt).sort((a, b) => cnt[b] - cnt[a])[0];
+    const ws = ink.map(i => i.w).filter(Boolean).sort((a, b) => a - b), w0 = ws[ws.length >> 1];
+    const opt = { Hc, step: Math.max(r.step, Math.ceil(Hc * 1.7 / 24) * 24), c: col0, w: w0 };
+    const newIds = [];
+    const put = (t, pos) => { const n0 = items().length; const p2 = writeHand(t, pos, opt); items().slice(n0).forEach(i => newIds.push(i.id)); return p2; };
+    if (tl.length === r.lines.length) { // cada renglón en su sitio
+      tl.forEach((t, k) => put(t, { x: r.lines[k].x1, x0: r.lines[k].x1, y: r.lines[k].base, maxX: Infinity }));
+    } else {                              // si no cuadran los renglones, todo seguido desde el primero
+      const x0 = Math.min(...r.lines.map(L0 => L0.x1)), maxX = Math.max(x0 + 400, ...ink.map(i => bboxOf(i).x2));
+      let pos = { x: x0, x0, y: r.lines[0].base, maxX };
+      tl.forEach(t => { pos = put(t, pos); pos = { ...pos, x: x0, y: pos.y + opt.step }; });
+    }
+    if (only && only.length) { sel = new Set(newIds); markSel(); }
+    renderItems(); dirty(); flash('Ordenada y con tu letra · ↶ para deshacer');
+  } finally { tidying = false; }
 }
 
 
@@ -306,8 +349,8 @@ function glyphFor(ch) {
   return null;
 }
 // Escribe un texto con tu letra a partir de pos {x, y(base), x0, maxX}; devuelve dónde termina
-function writeHand(text, pos) {
-  const Hc = 30 * (SIZES[curSize()]?.[1] || 1), step = Hc * 1.85, gap = Hc * .14, space = Hc * .62, list = [];
+function writeHand(text, pos, opt = {}) {
+  const Hc = opt.Hc || 30 * (SIZES[curSize()]?.[1] || 1), step = opt.step || Hc * 1.85, gap = Hc * .14, space = Hc * .62, list = [];
   let { x, y } = pos; const missing = new Set();
   const words = text.toUpperCase().split(/\s+/).filter(Boolean);
   for (const w of words) {
@@ -319,8 +362,8 @@ function writeHand(text, pos) {
       for (const part of g) {
         const ox = part.accent ? x + (g[0].adv - (part.adv || .3)) / 2 * sc : x, oy = part.accent ? y - 1.25 * sc : y;
         for (const st of part.s) {
-          const p = []; for (let j = 0; j < st.length; j += 3) { const gx = st[j] * sc, gy = st[j + 1] * sc; p.push(rd(ox + gx * cs - gy * sn), rd(oy + dy + gx * sn + gy * cs), rd2(Math.max(.6, baseW() * .7 * st[j + 2]))); }
-          list.push({ id: gid(), t: 's', k: 'brush', c: pen, w: rd2(baseW()), v: 2, p });
+          const p = []; for (let j = 0; j < st.length; j += 3) { const gx = st[j] * sc, gy = st[j + 1] * sc; p.push(rd(ox + gx * cs - gy * sn), rd(oy + dy + gx * sn + gy * cs), rd2(Math.max(.6, (opt.w || baseW()) * .7 * st[j + 2]))); }
+          list.push({ id: gid(), t: 's', k: 'brush', c: opt.c || pen, w: rd2(opt.w || baseW()), v: 2, p });
         }
       }
       x += g[0].adv * sc + gap;
@@ -640,7 +683,7 @@ function menuAction(k) {
   if (k === 'edit') { const it = selItems()[0], el = it && itemsEl.querySelector(`[data-id="${it.id}"]`); if (el) edit(el); }
   if (k === 'copy') copySel(false);
   if (k === 'copytx') copyHandText(selItems());
-  if (k === 'tidy') tidyHand(selItems());
+  if (k === 'tidy') tidyAll(selItems());
   if (k === 'cut') copySel(true);
   if (k === 'dup') dupSel();
   if (k === 'del') delSel();
@@ -1369,7 +1412,7 @@ export async function mount(el, opts = {}) {
     if (b.dataset.k) { kind = b.dataset.k; eraser = false; lasso = false; L.set('kind', kind); syncTools(); toggleSizePop(b); return; }
     if (b.id === 'ntColor') { togglePenPop(); return; }
     if (b.id === 'ntEraser') { eraser = !eraser; lasso = false; }
-    if (b.id === 'ntTidy') { tidyHand(sel.size ? selItems() : null); return; }
+    if (b.id === 'ntTidy') { tidyAll(sel.size ? selItems() : null); return; }
     if (b.id === 'ntShapes') { shapes = !shapes; L.set('shapes', shapes); flash(shapes ? 'Formas: se convierten en limpias' : 'Formas: se quedan a mano'); }
     if (b.id === 'ntText') { addText(caretW || lastW || centerW()); return; }
     if (b.id === 'ntInsTable') { addTable(caretW || lastW || centerW()); return; }
