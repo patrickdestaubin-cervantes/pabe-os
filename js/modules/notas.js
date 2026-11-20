@@ -422,17 +422,31 @@ async function openNote(id, focus) {
   if (focus?.item) { const it = items().find(i => i.id === focus.item); if (it) { cam.k = 1; cam.x = stage.clientWidth / 2 - it.x - (it.w || 130) / 2; cam.y = stage.clientHeight / 2 - it.y - 40; applyCam(); sel = new Set([it.id]); markSel(); } }
 }
 
-// Al abrir una nota: la pantalla va a lo último escrito, con el zoom justo para que quepa el ancho de lo escrito
+// Al abrir una nota: todo lo escrito centrado en la pantalla, con el zoom justo para que quepa (ancho y alto).
+// Si es muy largo y no cabe ni alejando, se ve el ancho completo y la parte de lo último que escribiste.
+let fitT = null;
 function focusLast() {
-  const a = items(); if (!a.length || !stage.clientWidth) return;
-  const t = a.find(i => i.id === cur.doc.last?.id) || a[a.length - 1];
-  const all = unionBox(a.map(bboxOf)), tb = bboxOf(t), W = stage.clientWidth, H = stage.clientHeight;
-  const margin = Math.min(48, W * .05), k = Math.max(.25, Math.min(1.6, (W - 2 * margin) / Math.max(120, all.x2 - all.x1)));
-  cam.k = k; cam.x = (W - (all.x2 - all.x1) * k) / 2 - all.x1 * k;
-  const top = 76, bottom = H - 90;
-  if ((all.y2 - all.y1) * k <= bottom - top) cam.y = top - all.y1 * k; // cabe entera
-  else cam.y = Math.min(top - all.y1 * k, Math.max(bottom - all.y2 * k, top + (bottom - top) * .62 - tb.y2 * k)); // lo último, a dos tercios de la pantalla
-  applyCam();
+  clearTimeout(fitT);
+  const run = () => {
+    const a = items(); if (!a.length || !stage.clientWidth) return;
+    const t = a.find(i => i.id === cur.doc.last?.id) || a[a.length - 1];
+    const all = unionBox(a.map(bboxOf)), tb = bboxOf(t), W = stage.clientWidth, H = stage.clientHeight;
+    const top = 76, bottom = H - 90, side = Math.min(48, W * .05);
+    const cw = Math.max(120, all.x2 - all.x1), ch = Math.max(60, all.y2 - all.y1);
+    const kW = (W - 2 * side) / cw, kH = (bottom - top) / ch;
+    let k = Math.min(1.25, kW, kH);
+    if (k >= .45) { // cabe entera: centrada en los dos sentidos
+      cam.k = k; cam.x = (W - cw * k) / 2 - all.x1 * k; cam.y = top + (bottom - top - ch * k) / 2 - all.y1 * k;
+    } else {        // muy larga: ancho completo y lo último escrito a dos tercios de la pantalla
+      k = Math.max(.25, Math.min(1.25, kW)); cam.k = k; cam.x = (W - cw * k) / 2 - all.x1 * k;
+      cam.y = Math.min(top - all.y1 * k, Math.max(bottom - all.y2 * k, top + (bottom - top) * .62 - tb.y2 * k));
+    }
+    applyCam();
+  };
+  // esperar a que se pinten textos, imágenes y tablas (miden su tamaño real) y volver a encajar una vez cargadas
+  const sig = () => cam.x + ',' + cam.y + ',' + cam.k; let after = '';
+  requestAnimationFrame(() => requestAnimationFrame(() => { run(); after = sig(); }));
+  fitT = setTimeout(() => { if (sig() === after && !act && !ptrs.size) run(); }, 700); // si ya te has movido, no se toca
 }
 
 /* =================== pintar nota =================== */
@@ -985,7 +999,8 @@ function onDown(e) {
     if (act.k === 'move') armLongPress(e); return;
   }
   sel = new Set(); markSel();
-  if (isTouch && sawPen) { act = { k: 'pan', sx: e.clientX, sy: e.clientY, cam: { ...cam }, tap: true, touch: true }; armLongPress(e); return; }
+  // El dedo nunca escribe: arrastrar mueve el lienzo, dos dedos zoom, un toque abre un cuadro de texto. Solo el Pencil (o el ratón) dibuja.
+  if (isTouch) { act = { k: 'pan', sx: e.clientX, sy: e.clientY, cam: { ...cam }, tap: true, touch: true }; armLongPress(e); return; }
   hideCaret(); snap();
   const s = newStroke(w, e); items().push(s); const el = mkPath(s); ink.appendChild(el);
   act = { k: 'draw', s, el, isPen, touch: isTouch, lt: e.timeStamp, lx: e.clientX, ly: e.clientY, moved: 0 };
