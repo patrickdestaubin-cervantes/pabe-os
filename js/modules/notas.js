@@ -339,8 +339,32 @@ async function savePdf(it) {
    PABE usa tu «alfabeto personal», que escribes una vez (cada letra, número y signo) en «Enseñar mi letra». */
 const GLYPH_CHARS = 'ABCDEFGHIJKLMNÑOPQRSTUVWXYZ0123456789.,:;?¿!¡()-/€@%+´';
 let glyphs = null; // { 'A': { s: [[x,y,w,…], …], adv } } en unidades de «altura de mayúscula» (1 = de la línea de arriba a la de base)
-async function loadGlyphs() { const c = await col.getCfg(); glyphs = c.glyphs || {}; return glyphs; }
-async function saveGlyphs(g) { glyphs = g; const c = await col.getCfg(); await col.setCfg({ ...c, glyphs: g }); }
+async function loadGlyphs() { const c = await col.getCfg(); glyphs = prepGlyphs(c.glyphs || {}); return glyphs; }
+// Limpia cada letra antes de usarla: quita puntitos y toques sueltos (que separaban las letras y dejaban puntos en medio)
+// y calcula su ancho solo con los trazos de verdad. En signos de puntuación y tildes se respeta todo.
+const PUNCT = '.,:;?¿!¡´%';
+function prepGlyphs(src) {
+  const out = {};
+  for (const [ch, g] of Object.entries(src)) {
+    const raw = g.raw; if (!raw?.length) { if (g.s) out[ch] = g; continue; }
+    const box = st => { let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity; for (let j = 0; j < st.length; j += 3) { x1 = Math.min(x1, st[j]); x2 = Math.max(x2, st[j]); y1 = Math.min(y1, st[j + 1]); y2 = Math.max(y2, st[j + 1]); } return { x1, y1, x2, y2, sz: Math.max(x2 - x1, y2 - y1) }; };
+    let keep = raw.map(st => ({ st, b: box(st) }));
+    if (!PUNCT.includes(ch)) {
+      const big = keep.filter(o => o.b.sz >= 8); if (big.length) {
+        const bx1 = Math.min(...big.map(o => o.b.x1)), bx2 = Math.max(...big.map(o => o.b.x2));
+        keep = keep.filter(o => o.b.sz >= 8 || (o.b.x1 >= bx1 - 3 && o.b.x2 <= bx2 + 3 && o.b.sz >= 4)); // fuera: puntos sueltos y toques alejados
+      }
+    }
+    if (!keep.length) continue;
+    let minX = Infinity, maxX = -Infinity, sw = 0, n = 0;
+    keep.forEach(({ st }) => { for (let j = 0; j < st.length; j += 3) { minX = Math.min(minX, st[j]); maxX = Math.max(maxX, st[j]); sw += st[j + 2]; n++; } });
+    const avgW = sw / n || 6;
+    out[ch] = { raw, adv: Math.max(.12, (maxX - minX) / 50), s: keep.map(({ st }) => { const o = []; for (let j = 0; j < st.length; j += 3) o.push((st[j] - minX) / 50, (st[j + 1] - 75) / 50, st[j + 2] / avgW); return o; }) };
+  }
+  if (!out['´']) out['´'] = { auto: true, adv: .28, s: [[.05, -.02, 1, .16, -.14, 1, .28, -.26, 1]] }; // tilde sencilla si no la escribiste
+  return out;
+}
+async function saveGlyphs(g) { glyphs = prepGlyphs(g); const c = await col.getCfg(); await col.setCfg({ ...c, glyphs: g }); }
 const rnd = (a, b) => a + Math.random() * (b - a);
 function glyphFor(ch) {
   if (glyphs[ch]) return [glyphs[ch]];
@@ -350,7 +374,7 @@ function glyphFor(ch) {
 }
 // Escribe un texto con tu letra a partir de pos {x, y(base), x0, maxX}; devuelve dónde termina
 function writeHand(text, pos, opt = {}) {
-  const Hc = opt.Hc || 30 * (SIZES[curSize()]?.[1] || 1), step = opt.step || Hc * 1.85, gap = Hc * .14, space = Hc * .62, list = [];
+  const Hc = opt.Hc || 30 * (SIZES[curSize()]?.[1] || 1), step = opt.step || Hc * 1.85, gap = Hc * .16, space = Hc * .7, list = [];
   let { x, y } = pos; const missing = new Set();
   const words = text.toUpperCase().split(/\s+/).filter(Boolean);
   for (const w of words) {
@@ -358,9 +382,9 @@ function writeHand(text, pos, opt = {}) {
     if (x > pos.x0 && x + ww > pos.maxX) { x = pos.x0; y += step; }
     for (const { ch, g } of gs) {
       if (!g) { missing.add(ch); continue; }
-      const sc = Hc * rnd(.96, 1.04), rot = rnd(-.035, .035), dy = rnd(-.03, .03) * Hc, cs = Math.cos(rot), sn = Math.sin(rot);
+      const sc = Hc * rnd(.98, 1.02), rot = rnd(-.015, .015), dy = rnd(-.015, .015) * Hc, cs = Math.cos(rot), sn = Math.sin(rot);
       for (const part of g) {
-        const ox = part.accent ? x + (g[0].adv - (part.adv || .3)) / 2 * sc : x, oy = part.accent ? y - 1.25 * sc : y;
+        const ox = part.accent ? x + (g[0].adv - (part.adv || .3)) / 2 * sc : x, oy = part.accent ? y - 1.15 * sc - Math.min(0, ...part.s.flatMap(st => st.filter((_, j) => j % 3 === 1))) * sc - .12 * sc : y;
         for (const st of part.s) {
           const p = []; for (let j = 0; j < st.length; j += 3) { const gx = st[j] * sc, gy = st[j + 1] * sc; p.push(rd(ox + gx * cs - gy * sn), rd(oy + dy + gx * sn + gy * cs), rd2(Math.max(.6, (opt.w || baseW()) * .7 * st[j + 2]))); }
           list.push({ id: gid(), t: 's', k: 'brush', c: opt.c || pen, w: rd2(opt.w || baseW()), v: 2, p });
@@ -409,7 +433,7 @@ async function dictate() {
 }
 // «Enseñar mi letra»: una casilla por letra; se escribe con el lápiz (o el dedo) como lo haces siempre
 function openGlyphs() {
-  const box = $('#ntGlyphs'), work = JSON.parse(JSON.stringify(glyphs || {}));
+  const box = $('#ntGlyphs'), work = Object.fromEntries(Object.entries(JSON.parse(JSON.stringify(glyphs || {}))).filter(([, g]) => g.raw?.length).map(([k, g]) => [k, { raw: g.raw }]));
   const cell = ch => `<div class="gl-c" data-ch="${esc(ch)}"><svg viewBox="0 0 100 100"><line x1="4" x2="96" y1="25" y2="25"/><line x1="4" x2="96" y1="75" y2="75"/><text x="50" y="72" text-anchor="middle">${esc(ch)}</text><g></g></svg><button class="gl-x" aria-label="Borrar ${esc(ch)}">×</button></div>`;
   box.innerHTML = `<div class="gl-panel"><header><b>Enseñar mi letra</b><span class="mut">Escribe cada letra, número y signo una vez, entre las dos rayas, como lo haces siempre. «´» es la tilde.</span><button class="btn" id="glSave">Guardar</button><button class="gl-close" id="glClose" aria-label="Cerrar">✕</button></header><div class="gl-grid">${[...GLYPH_CHARS].map(cell).join('')}</div></div>`;
   box.hidden = false;
