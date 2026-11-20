@@ -72,7 +72,19 @@ const HTML = `
 const items = () => cur.doc.tabs[cur.tab];
 function isBlank() { return !cur.meta.title.trim() && !cur.meta.tags.length && Object.values(cur.doc.tabs).every(a => !a.length); }
 let saveT;
-function dirty() { clearTimeout(saveT); saveT = setTimeout(saveNow, 600); scheduleHW(); }
+// Nota nueva + empezar a dictar o escribir en los primeros segundos = es un recordatorio rápido:
+// se le pone sola la etiqueta «Recordatorios» (si ya existe). Pasado ese margen, no se toca nada.
+const AUTO_TAG_MS = 5000;
+function autoReminder() {
+  if (!cur || cur.saved || cur.autoTag || !cur.openedAt) return;
+  cur.autoTag = true; // solo se decide una vez por nota
+  if (Date.now() - cur.openedAt > AUTO_TAG_MS) return;
+  const norm = x => (x || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+  const t = tags.list(SYS).find(x => /^recordatorios?$/.test(norm(x.nombre)));
+  if (!t || cur.meta.tags.includes(t.id)) return;
+  cur.meta.tags.push(t.id); renderChips();
+}
+function dirty() { autoReminder(); clearTimeout(saveT); saveT = setTimeout(saveNow, 600); scheduleHW(); }
 // lo último que escribiste o tocaste (para volver ahí al abrir la nota)
 const markLast = id => { if (cur && id) cur.doc.last = { tab: cur.tab, id }; };
 // Título automático: el primer párrafo del primer cuadro de texto, salvo que lo hayas escrito tú a mano
@@ -330,6 +342,7 @@ async function dictate() {
   if (Object.keys(glyphs).length < 20) { flash('Primero enséñame tu letra: escribe cada letra una vez'); return openGlyphs(); }
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) return flash('Este navegador no deja dictar aquí. Prueba en Chrome o Safari');
+  autoReminder(); // tocar el micrófono nada más abrir la nota cuenta como empezar a escribir
   const mic = $('#ntMic'), bub = $('#ntDict');
   let pos = dictStart(); followPos(pos);
   rec = new SR(); rec.lang = 'es-ES'; rec.continuous = true; rec.interimResults = true;
@@ -384,7 +397,7 @@ function openGlyphs() {
 /* =================== abrir / nueva =================== */
 export function newNote() {
   flushXlsx(); saveNow(); if (cur?.saved) { clearTimeout(hwT); transcribe(cur); } const t = gid();
-  cur = { meta: { id: gid(), title: '', tags: [], tabs: [{ id: t, name: 'Hoja 1' }], created: Date.now(), updated: Date.now(), text: '', files: [], valores: {} }, doc: { tabs: { [t]: [] } }, saved: false, tab: t };
+  cur = { meta: { id: gid(), title: '', tags: [], tabs: [{ id: t, name: 'Hoja 1' }], created: Date.now(), updated: Date.now(), text: '', files: [], valores: {} }, doc: { tabs: { [t]: [] } }, saved: false, tab: t, openedAt: Date.now() };
   hist = []; redo = []; sel = new Set(); hideMenu(); hideCaret(); resetCam(); pagerOff(); renderNote(); setHash();
 }
 // La dirección de la pestaña lleva la nota abierta (#notas/<id>): se puede copiar, recargar o abrir en otra pestaña
@@ -1375,7 +1388,7 @@ export async function mount(el, opts = {}) {
   document.addEventListener('pointerdown', e => { const p = $('#ntTagPop'); if (p && !p.hidden && !e.target.closest('#ntTagPop') && !e.target.closest('#ntTagBtn')) p.hidden = true; });
   $('#ntTagPop').addEventListener('click', e => {
     const b = e.target.closest('button'); if (!b) return;
-    if (b.dataset.tg) { const id = b.dataset.tg, a = cur.meta.tags; cur.meta.tags = a.includes(id) ? a.filter(x => x !== id) : [...a, id]; renderChips(); dirty(); renderTagPop(); }
+    if (b.dataset.tg) { cur.autoTag = true; const id = b.dataset.tg, a = cur.meta.tags; cur.meta.tags = a.includes(id) ? a.filter(x => x !== id) : [...a, id]; renderChips(); dirty(); renderTagPop(); }
     if (b.dataset.c) { const n = $('#ntTName').value; $('#ntTagPop').dataset.color = b.dataset.c; renderTagPop(); $('#ntTName').value = n; }
   });
   $('#ntTagPop').addEventListener('submit', e => {
@@ -1383,7 +1396,7 @@ export async function mount(el, opts = {}) {
     if (!nombre) return renderTagPop('Escribe un nombre');
     if (tags.list(SYS).some(t => t.nombre.toLowerCase() === nombre.toLowerCase())) return renderTagPop('Ya existe un área con ese nombre');
     if (tags.usedColors(SYS).has(color.toLowerCase())) return renderTagPop('Ese color ya lo usa otra área');
-    const t = tags.add(SYS, nombre, color); cur.meta.tags.push(t.id); $('#ntTagPop').dataset.color = pickColor(SYS); renderChips(); dirty(); renderTagPop();
+    cur.autoTag = true; const t = tags.add(SYS, nombre, color); cur.meta.tags.push(t.id); $('#ntTagPop').dataset.color = pickColor(SYS); renderChips(); dirty(); renderTagPop();
   });
   $('#ntChips').addEventListener('click', e => { const b = e.target.closest('[data-rm]'); if (!b) return; cur.meta.tags = cur.meta.tags.filter(x => x !== b.dataset.rm); renderChips(); dirty(); });
 
