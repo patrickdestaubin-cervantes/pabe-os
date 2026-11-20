@@ -87,11 +87,16 @@ function autoReminder() {
 function dirty() { autoReminder(); clearTimeout(saveT); saveT = setTimeout(saveNow, 600); scheduleHW(); }
 // lo último que escribiste o tocaste (para volver ahí al abrir la nota)
 const markLast = id => { if (cur && id) cur.doc.last = { tab: cur.tab, id }; };
-// Título automático: el primer párrafo del primer cuadro de texto, salvo que lo hayas escrito tú a mano
+// Título automático (salvo que lo hayas escrito tú en el campo del título):
+// 1) el primer párrafo del primer cuadro de texto; 2) si no hay, lo primero que dictaste con el micrófono;
+// 3) si no, el primer renglón de lo escrito a mano (cuando PABE lo ha leído)
 function autoTitle() {
   if (!cur || cur.meta.titleManual) return;
   const first = cur.meta.tabs.flatMap(t => cur.doc.tabs[t.id] || []).find(i => i.t === 'x' && i.s.trim());
-  const t = first ? first.s.trim().split('\n')[0].replace(/^\s*•\s*/, '').trim().slice(0, 90) : '';
+  const line = x => (x || '').trim().split('\n').map(l => l.replace(/^\s*[•\-*]\s*/, '').trim()).find(Boolean) || '';
+  const hasInk = cur.meta.tabs.some(t => (cur.doc.tabs[t.id] || []).some(i => i.t === 's' && i.k !== 'mark'));
+  const hw = hasInk ? cur.meta.tabs.map(t => cur.doc.hw?.[t.id]?.text).find(x => x && x.trim()) : '';
+  const t = (first ? line(first.s) : hasInk && cur.doc.said ? line(cur.doc.said) : line(hw)).slice(0, 90);
   if (t !== cur.meta.title) { cur.meta.title = t; const inp = $('#ntTitle'); if (inp && document.activeElement !== inp) inp.value = t; }
 }
 // Texto de la nota (para buscar, la columna Contenido y el asistente): lo tecleado, tablas, hojas y la letra a mano ya transcrita
@@ -164,7 +169,7 @@ function offerCopy(t) {
 // Transcripción en segundo plano de cada hoja que cambió
 const sigOf = a => { let h = 0; for (const i of a) { const k = i.id + ':' + i.p.length + ':' + Math.round(i.p[0]) + ':' + Math.round(i.p[1]); for (let j = 0; j < k.length; j++) h = (h * 31 + k.charCodeAt(j)) | 0; } return a.length + '-' + h; };
 let hwT = null, hwBusy = false;
-function scheduleHW() { clearTimeout(hwT); hwT = setTimeout(() => transcribe(), 12000); }
+function scheduleHW() { clearTimeout(hwT); const quick = cur && !cur.meta.titleManual && !cur.meta.title; hwT = setTimeout(() => transcribe(), quick ? 3000 : 12000); }
 async function transcribe(target) {
   const c = target || cur; if (!c || !c.saved || hwBusy || !agente.hasKey() || !navigator.onLine) return;
   const id = c.meta.id, jobs = [];
@@ -174,8 +179,8 @@ async function transcribe(target) {
     const res = [];
     for (const j of jobs) res.push({ ...j, text: j.ink.length ? await readHand(j.ink) : '' });
     const apply = doc => { doc.hw = doc.hw || {}; res.forEach(r => { doc.hw[r.tab] = { sig: r.sig, text: r.text }; }); };
-    if (cur && cur.meta.id === id) { apply(cur.doc); saveNow(); if (!$('#ntLibPanel').hidden) table.render(); }
-    else { const doc = await col.load(id), m = col.index.get(id); if (doc && m) { apply(doc); const mm = clone(m); mm.text = noteText(mm, doc); await col.put(mm, doc); } }
+    if (cur && cur.meta.id === id) { apply(cur.doc); autoTitle(); saveNow(); if (!$('#ntLibPanel').hidden) table.render(); }
+    else { const doc = await col.load(id), m = col.index.get(id); if (doc && m) { apply(doc); const mm = clone(m); mm.text = noteText(mm, doc); if (!mm.titleManual && !mm.title) { const h = res.map(r => r.text).find(x => x && x.trim()); if (h) mm.title = h.trim().split('\n')[0].slice(0, 90); } await col.put(mm, doc); } }
   } catch (e) { console.warn('transcripción', e); }
   finally { hwBusy = false; }
 }
@@ -350,7 +355,7 @@ async function dictate() {
     let interim = '';
     for (let i = e.resultIndex; i < e.results.length; i++) {
       const r = e.results[i];
-      if (r.isFinal) { const t = r[0].transcript.trim(); if (t) { snap(); pos = writeHand(t, pos); renderItems(); dirty(); followPos(pos); } }
+      if (r.isFinal) { const t = r[0].transcript.trim(); if (t) { if (!cur.doc.said) cur.doc.said = t.charAt(0).toUpperCase() + t.slice(1); snap(); pos = writeHand(t, pos); renderItems(); dirty(); followPos(pos); } }
       else interim += r[0].transcript;
     }
     bub.hidden = !interim; bub.textContent = interim;
