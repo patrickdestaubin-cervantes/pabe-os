@@ -3,6 +3,7 @@
 // · Cada persona tiene sus notas, su calendario y su Drive; lo compartido vive en la cuenta del dueño y lo editan los dos.
 import { supa } from './supa.js';
 import { kv } from './store.js';
+import { CONFIG } from './config.js';
 
 export const OWNER_EMAIL = 'patrick.destaubin@gmail.com';
 export const space = {
@@ -17,6 +18,9 @@ export const space = {
   async load() {
     if (!supa.signedIn) return this;
     this.me = (supa.user?.email || '').toLowerCase(); this.uid = supa.user?.id || '';
+    if (!this.me || !this.uid) { // sesión antigua sin correo guardado: se pregunta a la nube quién soy
+      try { const t = await supa.token(); const u = await (await fetch(`${CONFIG.supabase.url}/auth/v1/user`, { headers: { apikey: CONFIG.supabase.key, Authorization: 'Bearer ' + t } })).json(); this.me = (u.email || '').toLowerCase(); this.uid = u.id || ''; } catch (e) {}
+    }
     try {
       const rows = (await supa.rest('/members?select=*')) || [];
       this.mine = rows.filter(r => r.email.toLowerCase() === this.me);
