@@ -165,15 +165,17 @@ export function createTable(el, cfg) {
     if (editing) return;
     const vis = visible(), rs = rows();
     const views = cfg.views ? `<div class="tb-views">${cfg.views.map(v => `<button class="tb-view${P.view === v.id ? ' on' : ''}" data-view="${v.id}">${esc(v.nombre)}</button>`).join('')}</div>` : '<div class="tb-views"></div>';
+    // en las etiquetas el chip enseña solo la etiqueta (sin «Área:»), para que se lea entera; el nombre de la propiedad va en la ayuda
+    const lab = (p, v) => p.tipo === 'tags' ? esc(v) : `${esc(p.nombre)}: ${esc(v)}`;
     const pinChips = P.pins.map(pin => {
       const p = allProps().find(x => x.id === pin.id); if (!p) return '';
       const fi = P.filters.findIndex(f => f.pin === pin.key), f = P.filters[fi], tg = pinTag(pin, p);
       // en los filtros fijos de fecha, la flecha ↑/↓ ordena por esa fecha (un toque cambia entre ascendente y descendente)
       const arrow = p.tipo === 'date' ? `<button class="tb-pinsort${P.sort?.id === p.id ? ' on' : ''}" data-pinsort="${p.id}" title="Ordenar por ${esc(p.nombre)}" aria-label="Cambiar orden">${P.sort?.id === p.id ? (P.sort.dir > 0 ? '↑' : '↓') : '↕'}</button>` : '';
-      if (f) return `<span class="tb-fchip tb-pinned">${arrow}<button data-fedit="${fi}">${esc(p.nombre)}: ${esc(filterLabel(p, f))}</button><button class="tb-x" data-fdel="${fi}" aria-label="Quitar filtro">×</button></span>`;
-      return `<span class="tb-fchip tb-pinoff">${arrow}<button data-pinon="${esc(pin.key)}">${tg ? `${esc(p.nombre)}: ${esc(tg.nombre || pin.tagName)}` : esc(p.nombre)}<span class="tb-ti">▾</span></button></span>`;
+      if (f) return `<span class="tb-fchip tb-pinned">${arrow}<button data-fedit="${fi}" title="${esc(p.nombre)}">${lab(p, filterLabel(p, f))}</button><button class="tb-x" data-fdel="${fi}" aria-label="Quitar filtro">×</button></span>`;
+      return `<span class="tb-fchip tb-pinoff">${arrow}<button data-pinon="${esc(pin.key)}" title="${esc(p.nombre)}">${tg ? lab(p, tg.nombre || pin.tagName) : esc(p.nombre)}<span class="tb-ti">▾</span></button></span>`;
     }).join('');
-    const chips = pinChips + P.filters.map((f, i) => { if (f.pin && P.pins.some(x => x.key === f.pin)) return ''; const p = allProps().find(x => x.id === f.id); return p ? `<span class="tb-fchip"><button data-fedit="${i}">${esc(p.nombre)}: ${esc(filterLabel(p, f))}</button><button class="tb-x" data-fdel="${i}" aria-label="Quitar filtro">×</button></span>` : ''; }).join('');
+    const chips = pinChips + P.filters.map((f, i) => { if (f.pin && P.pins.some(x => x.key === f.pin)) return ''; const p = allProps().find(x => x.id === f.id); return p ? `<span class="tb-fchip"><button data-fedit="${i}" title="${esc(p.nombre)}">${lab(p, filterLabel(p, f))}</button><button class="tb-x" data-fdel="${i}" aria-label="Quitar filtro">×</button></span>` : ''; }).join('');
     const sortChip = P.sort && !P.pins.some(x => x.id === P.sort.id && allProps().find(p => p.id === x.id)?.tipo === 'date') ? (() => { const p = allProps().find(x => x.id === P.sort.id); return p ? `<span class="tb-fchip tb-sortchip"><button data-sortflip>${P.sort.dir > 0 ? '↑' : '↓'} ${esc(p.nombre)}</button><button class="tb-x" data-sortdel aria-label="Quitar orden">×</button></span>` : ''; })() : '';
     const fw = fitWidths(vis);
     const cw = p => P.widths[p.id] || fw[p.id] || (p.tipo === 'title' ? 260 : p.tipo === 'content' ? 320 : p.tipo === 'check' ? 90 : 170);
