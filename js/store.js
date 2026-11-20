@@ -3,6 +3,7 @@
 import { drive } from './drive.js';
 import { CONFIG } from './config.js';
 import { supa, realtime, DEVICE } from './supa.js';
+import { space, OWNER_EMAIL } from './space.js';
 
 /* ---------- IndexedDB mínima ---------- */
 let dbp = null;
@@ -43,9 +44,15 @@ function setSync(state, msg = '') { sync.state = state; sync.msg = msg; emit('sy
 
 /* ---------- carpetas en Drive ---------- */
 let folderIds = null;
+// Carpeta raíz «06 PABE OS»: la de Patrick está fijada; cualquier otra persona tiene la suya en su propio Drive
+async function rootFolder() {
+  if (!space.me || space.me === OWNER_EMAIL) return CONFIG.rootFolder;
+  let r = await kv.get('drive:root'); if (r) return r;
+  r = await drive.findOrCreateFolder('06 PABE OS', 'root'); await kv.set('drive:root', r); return r;
+}
 async function folder(path) { // path: ['Notas',DATA_DIR]
   folderIds = folderIds || (await kv.get('drive:folders')) || {};
-  let parent = CONFIG.rootFolder, key = '';
+  let parent = await rootFolder(), key = '';
   for (const p of path) {
     key += '/' + p;
     if (!folderIds[key]) { folderIds[key] = await drive.findOrCreateFolder(p, parent); await kv.set('drive:folders', folderIds); }
@@ -98,6 +105,7 @@ class Collection {
   // Aplica una fila llegada de la nube (por consulta o en tiempo real). Devuelve true si cambió algo.
   async applyRemote(r) {
     const m = { ...(r.meta || {}), id: r.id, updated: r.updated, deleted: !!r.deleted };
+    if (r.user_id && r.user_id !== space.uid) m.owner = r.user_id; else delete m.owner; // de quién es (notas compartidas, Finanzas común)
     const l = this.index.get(m.id);
     if (l && (m.updated <= l.updated || this.dirty.has(m.id))) return false;
     this.index.set(m.id, m);
@@ -113,7 +121,7 @@ class Collection {
   async pull() {
     const last = await kv.get(this.name + ':srv');
     const since = last ? new Date(new Date(last).getTime() - 10000).toISOString() : '1970-01-01T00:00:00Z';
-    const rows = await supa.rest(`/items?col=eq.${this.name}&srv=gt.${encodeURIComponent(since)}&select=id,meta,updated,deleted,srv&order=srv.asc&limit=2000`) || [];
+    const rows = await supa.rest(`/items?col=eq.${this.name}&srv=gt.${encodeURIComponent(since)}&select=id,user_id,meta,updated,deleted,srv&order=srv.asc&limit=2000`) || [];
     let changed = false, max = last || since;
     for (const r of rows) { if (await this.applyRemote(r)) changed = true; if (r.srv > max) max = r.srv; }
     if (changed) { await this.saveIndex(); emit('change', { col: this.name }); }
@@ -134,7 +142,7 @@ class Collection {
     if (this.cfgDirty === undefined) this.cfgDirty = !!(await kv.get(this.name + ':cfgDirty'));
     if (this.cfgDirty) {
       const c = await this.getCfg();
-      await upsertKV('cfg:' + this.name, c, c.updated || Date.now());
+      await upsertKV('cfg:' + this.name, c, c.updated || Date.now(), space.ownerFor(this.name));
       this.cfgDirty = false; await kv.set(this.name + ':cfgDirty', false);
     }
     if (!this.dirty.size) return;
@@ -142,13 +150,17 @@ class Collection {
     for (const id of ids) {
       const m = this.index.get(id); if (!m) continue;
       stamp[id] = m.updated;
-      const row = { col: this.name, id, meta: m, updated: m.updated, deleted: !!m.deleted, device: DEVICE };
+      const shared = space.ownerFor(this.name), owner = shared || (m.owner && m.owner !== space.uid ? m.owner : null), mm = { ...m }; delete mm.owner;
+      const row = { col: this.name, id, meta: mm, updated: m.updated, deleted: !!m.deleted, device: DEVICE, ...(owner ? { user_id: owner } : {}) };
       const doc = m.deleted ? null : await this.get(id);
       if (doc) full.push({ ...row, doc }); else metaOnly.push(row);
     }
     // en tandas para no mandar envíos enormes
-    for (let i = 0; i < full.length; i += 25) await upsert('items', full.slice(i, i + 25));
-    if (metaOnly.length) await upsert('items', metaOnly, 'col,id,meta,updated,deleted,device');
+    // filas propias y filas de otra cuenta (compartidas) van por separado: cada envío lleva las mismas columnas
+    const own = a => a.filter(r => !r.user_id), oth = a => a.filter(r => r.user_id);
+    for (const part of [own(full), oth(full)]) for (let i = 0; i < part.length; i += 25) await upsert('items', part.slice(i, i + 25));
+    if (own(metaOnly).length) await upsert('items', own(metaOnly), 'col,id,meta,updated,deleted,device');
+    if (oth(metaOnly).length) await upsert('items', oth(metaOnly), 'user_id,col,id,meta,updated,deleted,device');
     for (const id of ids) if (this.index.get(id)?.updated === stamp[id]) this.dirty.delete(id);
     await kv.set(this.name + ':dirty', [...this.dirty]);
     ids.forEach(id => mirror.add(this.name, id));
@@ -210,6 +222,9 @@ export const tags = {
   async legacyDrivePull() { const dir = await folder(['_sistema']); const id = await fileId('etiquetas.json', dir); if (id) await this.merge(await drive.readJSON(id)); this.dirty = true; },
   async push() {
     if (!this.dirty) return;
+    // las etiquetas de Finanzas (fin-*) se comparten con quien comparte Finanzas
+    const fin = { sistemas: this.data.sistemas.filter(x => x.id.startsWith('fin-')), updated: this.data.updated || Date.now() }, fo = space.ownerFor('finanzas');
+    if (fo || space.members.some(m => (m.cols || []).includes('finanzas'))) await upsertKV('tags-fin', fin, fin.updated, fo);
     await upsertKV('tags', this.data, this.data.updated || Date.now());
     this.dirty = false; mirror.tags = true;
   },
@@ -253,7 +268,7 @@ export const files = {
     const map = (await kv.get('files:map')) || {};
     while (q.length) {
       const it = q[0], b = await blobs.get(it.localId);
-      if (b) { const dir = await folder([collection(it.col).label()]); const r = await drive.upload(b, { name: it.name, parents: [dir] }); map[it.localId] = r.id; await kv.set('files:map', map); emit('file', { localId: it.localId, id: r.id }); if (supa.signedIn) await upsertKV('file:' + it.localId, { id: r.id }, Date.now()).catch(() => {}); }
+      if (b) { const dir = (it.col === 'finanzas' && space.finFolder()) || await folder([collection(it.col).label()]); const r = await drive.upload(b, { name: it.name, parents: [dir] }); map[it.localId] = r.id; await kv.set('files:map', map); emit('file', { localId: it.localId, id: r.id }); if (supa.signedIn) await upsertKV('file:' + it.localId, { id: r.id }, Date.now()).catch(() => {}); }
       q.shift(); await kv.set('files:queue', q);
     }
   }
@@ -264,7 +279,7 @@ function upsert(table, rows, columns) {
   const conflict = table === 'items' ? 'user_id,col,id' : 'user_id,key';
   return supa.rest(`/${table}?on_conflict=${conflict}${columns ? '&columns=' + columns : ''}`, { method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=minimal' }, body: JSON.stringify(rows) });
 }
-function upsertKV(key, data, updated) { return upsert('kvs', [{ key, data, updated, device: DEVICE }]); }
+function upsertKV(key, data, updated, owner) { return upsert('kvs', [{ key, data, updated, device: DEVICE, ...(owner ? { user_id: owner } : {}) }]); }
 
 // ajustes de módulos y etiquetas que cambiaron en la nube
 async function pullKV() {
@@ -277,7 +292,8 @@ async function pullKV() {
   return rows;
 }
 async function applyKV(r) {
-  if (r.key === 'tags') return tags.merge(r.data);
+  if (r.key === 'tags' || r.key === 'tags-fin') return tags.merge(r.data);
+  if (r.key === 'ag:key') { try { const cur = localStorage.getItem('pabe:ag:key'); if (r.data?.key && !space.isOwner && (!cur || cur === '""')) localStorage.setItem('pabe:ag:key', JSON.stringify(r.data.key)); } catch (e) {} return; }
   if (r.key.startsWith('file:')) { const m = (await kv.get('files:map')) || {}; if (!m[r.key.slice(5)]) { m[r.key.slice(5)] = r.data.id; await kv.set('files:map', m); emit('file', { localId: r.key.slice(5), id: r.data.id }); } return; }
   if (r.key.startsWith('cfg:') && cols[r.key.slice(4)]?.loaded) return cols[r.key.slice(4)].applyCfg(r.data);
 }
@@ -340,6 +356,18 @@ async function readableNote(m) {
   if (!map[m.id]) { map[m.id] = r.id; await kv.set('drive:txt', map); }
 }
 
+// El dueño comparte su carpeta «06 PABE OS/Finanzas» con quien comparte Finanzas (para los adjuntos de los dos)
+async function shareFinFolders() {
+  if (!space.isOwner) return;
+  for (const m of space.members) {
+    if (!(m.cols || []).includes('finanzas') || m.fin_folder) continue;
+    const dir = await folder(['Finanzas']);
+    await drive.req(`https://www.googleapis.com/drive/v3/files/${dir}/permissions?sendNotificationEmail=false&supportsAllDrives=true`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ role: 'writer', type: 'user', emailAddress: m.email }) });
+    await supa.rest(`/members?owner=eq.${space.uid}&email=eq.${encodeURIComponent(m.email)}`, { method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ fin_folder: dir }) });
+    m.fin_folder = dir;
+  }
+}
+
 /* ---------- motor de sincronía ---------- */
 let pushT = null, running = false, again = false;
 export function schedulePush() { clearTimeout(pushT); pushT = setTimeout(syncNow, 400); }
@@ -349,10 +377,12 @@ export async function syncNow() {
   running = true; setSync('syncing');
   try {
     const work = (async () => {
+      if (!space.loaded) await space.load();
+      if (!space.allowed) throw Object.assign(new Error('noaccess'), { code: 'noaccess' });
       await migrateIfNeeded();
       await pullKV();
       for (const c of Object.values(cols)) if (c.loaded) await c.pull();   // primero traer lo de otros dispositivos
-      if (drive.ready || await drive.ensure()) await files.push();         // adjuntos al Drive
+      if (drive.ready || await drive.ensure()) { await files.push(); await shareFinFolders().catch(e => console.warn('compartir Finanzas', e)); } // adjuntos al Drive
       await tags.push();
       for (const c of Object.values(cols)) if (c.loaded) await c.push();
     })();
@@ -360,7 +390,7 @@ export async function syncNow() {
     sync.last = Date.now(); setSync('ok');
   } catch (e) {
     console.error(e);
-    setSync(e.code === 'auth' ? 'auth' : 'error', navigator.onLine === false ? 'Sin conexión · guardado aquí' : 'No se pudo guardar');
+    setSync(e.code === 'auth' ? 'auth' : 'error', e.code === 'noaccess' ? 'Sin acceso a PABE' : navigator.onLine === false ? 'Sin conexión · guardado aquí' : 'No se pudo guardar');
   }
   running = false; if (again) { again = false; schedulePush(); }
 }

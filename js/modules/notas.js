@@ -3,6 +3,7 @@ import { collection, tags, files, on, syncNow } from '../store.js';
 import { createTable, pickColor, tagChip, PALETTE } from '../tabla.js';
 import { plainClick, fitPop } from '../ui.js';
 import { agente } from '../agente.js';
+import { space as who } from '../space.js';
 import { createSheet, importWorkbook, exportWorkbook, sheetFromRows, sheetTSV, newSheet, fmtVal } from '../hoja.js';
 const TXT = 18; // tamaño de letra estándar de todos los cuadros de texto
 
@@ -34,7 +35,7 @@ const HTML = `
 <div class="nt-top">
  <a class="libb" id="ntLib" href="#notas/todas" title="Todas las notas (Ctrl+K)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span class="lg">Todas las notas</span><span class="sm">Notas</span></a>
  <input id="ntTitle" class="nt-title" placeholder="Sin título" autocomplete="off" aria-label="Nombre de la nota">
- <div id="ntChips" class="nt-chips"></div><button id="ntTagBtn" class="ghost">+ área</button>
+ <div id="ntChips" class="nt-chips"></div><button id="ntTagBtn" class="ghost">+ área</button><button id="ntShare" class="ghost nt-share" hidden>Compartir</button><div class="nt-sharepop" id="ntSharePop" hidden></div>
 </div>
 <div class="nt-side"><button id="ntZoom" class="nt-zoom" title="Restablecer vista">100%</button></div>
 <button id="ntMic" class="nt-mic" title="Dictar: lo que digas se escribe con tu letra (mantén pulsado para enseñarle tu letra)" aria-label="Dictar con tu letra"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button><div class="nt-dict" id="ntDict" hidden></div>
@@ -466,6 +467,37 @@ function openGlyphs() {
   };
 }
 
+
+/* =================== notas compartidas ===================
+   Cada nota es de quien la escribe. «Compartir» la deja ver y editar a la otra persona (p. ej. Berna) en su PABE.
+   Borrar una nota compartida solo la quita de TU lista: a la otra persona no se le borra. */
+const lc = x => String(x || '').toLowerCase();
+const visibleNote = m => !(m.hiddenFor || []).includes(who.me) && !(m.owner && !(m.shared || []).map(lc).includes(who.me));
+function removeNote(r) {
+  const m = col.index.get(r.id); if (!m) return;
+  if (m.owner) { col.put({ ...m, shared: (m.shared || []).filter(e => lc(e) !== who.me) }); return; } // compartida conmigo: solo dejo de verla
+  if ((m.shared || []).length) { col.put({ ...m, hiddenFor: [...new Set([...(m.hiddenFor || []), who.me])] }); return; } // mía y compartida: la otra persona la conserva
+  col.remove(r.id);
+}
+function paintShare() {
+  const b = $('#ntShare'); if (!b) return;
+  const can = who.partners().length > 0 || !!cur?.meta.owner; b.hidden = !can || !cur; if (b.hidden) return;
+  const sh = cur.meta.owner ? 'Compartida contigo' : (cur.meta.shared || []).length ? 'Compartida' : 'Compartir';
+  b.textContent = sh; b.classList.toggle('on', sh !== 'Compartir');
+}
+function openShare() {
+  const pop = $('#ntSharePop'), m = cur.meta;
+  if (m.owner) {
+    const who = who.mine.find(x => x.owner === m.owner)?.owner_email || who.members.find(x => x.owner === m.owner)?.email || 'otra persona';
+    pop.innerHTML = `<h4>Nota compartida contigo</h4><p class="mut pad">La escribió ${esc(who)}. Los dos podéis editarla.</p><button class="btn ghost" data-sh="leave">Quitar de mis notas</button>`;
+  } else {
+    if (!cur.saved) { flash('Escribe algo en la nota antes de compartirla'); return; }
+    const on = new Set((m.shared || []).map(lc));
+    pop.innerHTML = `<h4>Compartir esta nota con</h4>${who.partners().map(e => `<label class="sh-row"><input type="checkbox" data-sh-email="${esc(e)}" ${on.has(e) ? 'checked' : ''}><span>${esc(e)}</span></label>`).join('') || '<p class="mut pad">Aún no hay nadie con acceso a tu PABE.</p>'}<p class="mut pad">Podréis editarla los dos. Si alguno la borra, al otro no se le borra.</p>`;
+  }
+  pop.hidden = false; fitPop(pop, $('#ntShare'));
+}
+
 /* =================== abrir / nueva =================== */
 export function newNote() {
   flushXlsx(); saveNow(); if (cur?.saved) { clearTimeout(hwT); transcribe(cur); } const t = gid();
@@ -517,7 +549,7 @@ function focusLast() {
 }
 
 /* =================== pintar nota =================== */
-function renderChips() { $('#ntChips').innerHTML = cur.meta.tags.map(id => tags.get(SYS, id)).filter(Boolean).map(t => `<span class="chip" style="--c:${t.color}"><i></i>${esc(t.nombre)}<button class="x" data-rm="${t.id}" aria-label="Quitar">×</button></span>`).join(''); }
+function renderChips() { paintShare(); $('#ntChips').innerHTML = cur.meta.tags.map(id => tags.get(SYS, id)).filter(Boolean).map(t => `<span class="chip" style="--c:${t.color}"><i></i>${esc(t.nombre)}<button class="x" data-rm="${t.id}" aria-label="Quitar">×</button></span>`).join(''); }
 function renderTabs() { $('#ntTabs').innerHTML = cur.meta.tabs.map(t => `<button class="tab${t.id === cur.tab ? ' on' : ''}" data-tab="${t.id}" title="Doble clic para renombrar">${esc(t.name)}</button>`).join('') + `<button class="tab" id="ntAddTab" aria-label="Nueva pestaña">+</button>`; }
 function renderNote() { $('#ntTitle').value = cur.meta.title; renderChips(); renderTabs(); renderItems(); }
 
@@ -1336,7 +1368,7 @@ function buildTable() {
     cardProps: ['area', 'content', 'created'],
     defaultPins: [{ id: 'created' }, { id: 'area', tagName: 'Plan semanal' }], // filtros fijos arriba (se cambian desde el propio filtro: 📌)
     fit: ['created', 'title', 'area', 'content'], // en tablet y ordenador, estas cuatro siempre a la vista // en el móvil: título, área y contenido primero
-    views: [{ id: 'all', nombre: 'Todas' }, { id: 'recent', nombre: 'Últimos 7 días', filter: r => Date.now() - (r.updated || r.created) < 7 * 864e5 }, { id: 'files', nombre: 'Con archivos', filter: r => (r.files || []).length > 0 }],
+    views: [{ id: 'all', nombre: 'Todas' }, { id: 'recent', nombre: 'Últimos 7 días', filter: r => Date.now() - (r.updated || r.created) < 7 * 864e5 }, { id: 'files', nombre: 'Con archivos', filter: r => (r.files || []).length > 0 }, { id: 'shared', nombre: 'Compartidas', filter: r => !!r.owner || (r.shared || []).length > 0 }],
     props: () => [
       { id: 'created', nombre: 'Fecha', tipo: 'date', basica: true, readonly: true, get: r => r.created },
       { id: 'title', nombre: 'Nombre', tipo: 'title', basica: true, readonly: true, opens: true, get: r => r.title },
@@ -1347,13 +1379,13 @@ function buildTable() {
     ],
     custom: () => (col.cfg?.props || custom),
     saveCustom: arr => { custom = arr; col.setCfg({ ...(col.cfg || {}), props: arr }); },
-    rows: () => col.list(),
+    rows: () => col.list().filter(visibleNote),
     save: r => { if (cur && cur.meta.id === r.id) { Object.assign(cur.meta, { title: r.title, titleManual: r.titleManual, tags: r.tags, valores: r.valores }); renderChips(); $('#ntTitle').value = r.title; } col.put(r); },
     create: nombre => { const t = gid(), m = { id: gid(), title: nombre, titleManual: !!nombre, tags: [], tabs: [{ id: t, name: 'Hoja 1' }], created: Date.now(), text: '', files: [], valores: {} }; col.put(m, { tabs: { [t]: [] } }); return col.index.get(m.id); },
     open: r => openNote(r.id),
     href: r => '#notas/' + r.id, // clic derecho en el nombre → abrir la nota en otra pestaña
     openFile: (r, f) => openNote(r.id, { tab: f.tab, item: f.item }),
-    remove: r => { col.remove(r.id); if (cur?.meta.id === r.id) { cur.saved = false; newNote(); } },
+    remove: r => { removeNote(r); if (cur?.meta.id === r.id) { cur.saved = false; newNote(); } },
     duplicate: async r => { const d = await col.load(r.id); const m = { ...clone(r), id: gid(), title: (r.title || 'Sin título') + ' (copia)', created: Date.now() }; col.put(m, d ? clone(d) : { tabs: {} }); },
   });
 }
@@ -1485,6 +1517,10 @@ export async function mount(el, opts = {}) {
     if (tags.usedColors(SYS).has(color.toLowerCase())) return renderTagPop('Ese color ya lo usa otra área');
     cur.autoTag = true; const t = tags.add(SYS, nombre, color); cur.meta.tags.push(t.id); $('#ntTagPop').dataset.color = pickColor(SYS); renderChips(); dirty(); renderTagPop();
   });
+  $('#ntShare').onclick = () => { const p = $('#ntSharePop'); if (!p.hidden) { p.hidden = true; return; } openShare(); };
+  $('#ntSharePop').addEventListener('change', e => { const c = e.target.closest('[data-sh-email]'); if (!c) return; const set = new Set((cur.meta.shared || []).map(lc)); c.checked ? set.add(c.dataset.shEmail) : set.delete(c.dataset.shEmail); cur.meta.shared = [...set]; cur.meta.hiddenFor = (cur.meta.hiddenFor || []).filter(x => !set.has(x)); dirty(); saveNow(); paintShare(); flash(c.checked ? 'Compartida con ' + c.dataset.shEmail : 'Ya no se comparte con ' + c.dataset.shEmail); });
+  $('#ntSharePop').addEventListener('click', e => { if (e.target.closest('[data-sh=leave]')) { removeNote(cur.meta); $('#ntSharePop').hidden = true; cur.saved = false; newNote(); flash('Quitada de tus notas (la otra persona la conserva)'); } });
+  document.addEventListener('pointerdown', e => { const p = $('#ntSharePop'); if (p && !p.hidden && !e.target.closest('#ntSharePop,#ntShare')) p.hidden = true; }, true);
   $('#ntChips').addEventListener('click', e => { const b = e.target.closest('[data-rm]'); if (!b) return; cur.meta.tags = cur.meta.tags.filter(x => x !== b.dataset.rm); renderChips(); dirty(); });
 
   document.addEventListener('paste', e => {

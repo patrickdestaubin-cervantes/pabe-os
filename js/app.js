@@ -9,6 +9,7 @@ import * as calendario from './modules/calendario.js';
 import * as dia from './modules/dia.js';
 import { agente, mountAgent, pullSettings } from './agente.js';
 import { plainClick } from './ui.js';
+import { OWNER_EMAIL, space } from './space.js';
 
 const $ = s => document.querySelector(s);
 // Módulos de PABE. «mod»: módulo ya integrado en esta web. «url»: módulo que aún vive en su propia web de pruebas.
@@ -65,12 +66,27 @@ async function resetIfNeeded() {
   try { Object.keys(localStorage).filter(k => k.startsWith('pabe:') && k !== 'pabe:sb' && k !== 'pabe:device' && !k.startsWith('pabe:ag:') && !k.startsWith('pabe:kind') && !k.startsWith('pabe:pen') && !k.startsWith('pabe:shapes') && k !== 'pabe:sawPen').forEach(k => localStorage.removeItem(k)); localStorage.setItem('pabe:epoch', CONFIG.epoch); } catch (e) {}
 }
 
+// Cada persona empieza en su propio PABE: si en este dispositivo entra otra cuenta, se vacía la copia local de la anterior
+async function switchUser() {
+  const u = supa.user; if (!u?.id) return false;
+  let prev = null; try { prev = localStorage.getItem('pabe:uid'); } catch (e) {}
+  const other = prev ? prev !== u.id : (u.email || '').toLowerCase() !== OWNER_EMAIL;
+  try { localStorage.setItem('pabe:uid', u.id); } catch (e) {}
+  if (!other || (!prev && !(await hasLocalData()))) return false;
+  await new Promise(ok => { try { const r = indexedDB.deleteDatabase('pabe-os'); r.onsuccess = r.onerror = r.onblocked = () => ok(); } catch (e) { ok(); } });
+  try { Object.keys(localStorage).filter(k => k.startsWith('pabe:') && !['pabe:sb', 'pabe:device', 'pabe:uid', 'pabe:epoch', 'pabe:tok'].includes(k)).forEach(k => localStorage.removeItem(k)); } catch (e) {}
+  location.reload(); return true;
+}
+async function hasLocalData() { try { const dbs = await indexedDB.databases?.(); return !dbs || dbs.some(d => d.name === 'pabe-os'); } catch (e) { return true; } }
+
 async function boot() {
   await resetIfNeeded();
   // vuelta del inicio de sesión con Google: la sesión llega en la dirección
   const login = await supa.handleRedirect();
   if (login?.error) toast('No se pudo iniciar sesión: ' + login.error);
   else if (login?.google) drive.use(login.google, login.expires_in, CONFIG.scope);
+  if (await switchUser()) return;
+  if (supa.signedIn) await Promise.race([space.load(), new Promise(ok => setTimeout(ok, 4000))]);
   $('#rail').addEventListener('click', e => { const b = e.target.closest('.mod'); if (!b || !plainClick(e)) return; e.preventDefault(); go(b.dataset.m); });
   // «+»: en Calendario crea un evento; en el resto, una nota nueva (clic derecho → abrirlo en otra pestaña)
   $('#plus').onclick = e => { if (!plainClick(e)) return; e.preventDefault(); if (current === 'calendario') return calendario.newEvent(); if (current === 'dia') return dia.newItem(); if (current !== 'notas') go('notas'); else notas.enter(); };

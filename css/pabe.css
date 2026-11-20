@@ -500,3 +500,7 @@ path.mk{mix-blend-mode:multiply}@media (prefers-color-scheme:dark){path.mk{mix-b
  .dia-add{flex-wrap:wrap}.dia-add input{flex-basis:100%}.dia-add .btn{flex:1}
 }
 @media (max-width:420px){.ot-weeks{grid-template-columns:1fr}.ot-week{border-right:0;border-bottom:1px solid var(--line)}}
+.nt-share{margin-left:4px}.nt-share.on{color:#1f6fc5;border-color:color-mix(in srgb,#2383e2 40%,var(--line))}
+.nt-sharepop{position:fixed;z-index:60;width:min(300px,calc(100vw - 24px));padding:10px;border-radius:12px;background:var(--pop);border:1px solid var(--line);box-shadow:var(--shadow)}
+.nt-sharepop h4{margin:2px 4px 8px;font-size:13px}.nt-sharepop .sh-row{display:flex;align-items:center;gap:8px;padding:8px 6px;border-radius:8px;font-size:14px}.nt-sharepop .sh-row:hover{background:var(--soft)}
+.nt-sharepop .pad{padding:4px 6px;font-size:12px}.nt-sharepop .btn{width:100%;margin-top:6px}

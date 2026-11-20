@@ -1,5 +1,7 @@
 // Agente de PABE: un único asistente para todos los módulos. Cada módulo le registra sus herramientas.
 // Habla con Claude (API de Anthropic) directamente desde el dispositivo; la clave se guarda solo en este dispositivo.
+import { supa } from './supa.js';
+import { space } from './space.js';
 import { drive } from './drive.js';
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -48,7 +50,7 @@ export const agente = {
   register(id, def) { modules[id] = def; },
   setCurrent(fn) { currentModule = fn; },
   hasKey: () => !!L.get('key', ''),
-  ensureKey: async () => { if (!L.get('key', '')) await pullSettings(); return !!L.get('key', ''); },
+  ensureKey: async () => { if (!L.get('key', '')) await pullSettings(); if (!L.get('key', '')) await sharedKey(); return !!L.get('key', ''); },
   // Una sola petición a Claude (sin herramientas), p. ej. para leer letra a mano en una imagen
   async once({ content, system = '', max_tokens = 2000, model }) {
     const key = L.get('key', ''); if (!key) throw new Error('sin-clave');
@@ -176,7 +178,7 @@ function openSettings(msg = '') {
    <label class="ag-row"><input type="checkbox" id="agVoice" ${L.get('voice', true) ? 'checked' : ''}> Responder en voz alta cuando pregunto con el micrófono</label>
    <p class="ag-err">${esc(msg)}</p>
    <div class="ag-btns"><button class="ag-sec" id="agClear">Borrar conversación</button><button class="ag-pri" id="agSave">Guardar</button></div>`;
-  $('#agSave').onclick = async () => { L.set('key', $('#agKey').value.trim()); L.set('model', $('#agModel').value); L.set('voice', $('#agVoice').checked); s.hidden = true; await pushSettings(); };
+  $('#agSave').onclick = async () => { L.set('key', $('#agKey').value.trim()); L.set('model', $('#agModel').value); L.set('voice', $('#agVoice').checked); s.hidden = true; await pushSettings(); shareKey(); };
   $('#agClear').onclick = () => { msgs = []; L.set('msgs', msgs); renderLog(); s.hidden = true; };
 }
 
@@ -185,6 +187,15 @@ async function pushSettings() {
   if (!drive.ready) return;
   try { await drive.appSet('asistente.json', { key: L.get('key', ''), model: L.get('model', MODELS[0][0]), voice: L.get('voice', true), updated: Date.now() }); L.set('synced', Date.now()); } catch (e) { console.warn('ajustes asistente', e); }
 }
+// La clave de Claude de Patrick la usan también las personas con acceso a PABE (p. ej. Berna)
+async function sharedKey() {
+  if (!supa.signedIn || space.isOwner) return;
+  try { const r = await supa.rest('/kvs?key=eq.ag:key&select=data'); const k = r?.[0]?.data?.key; if (k) L.set('key', k); } catch (e) {}
+}
+export async function shareKey() {
+  if (!supa.signedIn || !space.isOwner || !space.members.length || !L.get('key', '')) return;
+  try { await supa.rest('/kvs?on_conflict=user_id,key', { method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=minimal' }, body: JSON.stringify([{ key: 'ag:key', data: { key: L.get('key', '') }, updated: Date.now(), device: 'agente' }]) }); } catch (e) {}
+}
 export async function pullSettings() {
   if (!drive.ready) return;
   try {
@@ -192,6 +203,7 @@ export async function pullSettings() {
     if (r && r.key && (r.updated || 0) >= (L.get('synced', 0) || 0)) { L.set('key', r.key); if (r.model) L.set('model', r.model); if (r.voice != null) L.set('voice', r.voice); L.set('synced', r.updated || Date.now()); }
     else if (!r && L.get('key', '')) await pushSettings();
   } catch (e) { console.warn('ajustes asistente', e); }
+  if (!L.get('key', '')) await sharedKey(); else shareKey();
 }
 
 export function mountAgent() {

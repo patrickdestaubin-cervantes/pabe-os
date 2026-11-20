@@ -1,3 +1,4 @@
+import { space } from '../space.js';
 import { plainClick } from '../ui.js';
 // Módulo 2 — Finanzas (fase 1): Movimientos y Cuentas y patrimonio, con la Tabla PABE común
 import { collection, tags, files, on } from '../store.js';
@@ -230,7 +231,7 @@ export async function mount(el) {
    <div class="tb-host" id="finMov"></div><div class="tb-host" id="finCta" hidden></div><div class="cf-host" id="finCf" hidden></div></div>`;
   await col.init(); await tags.init(); seedTags();
   // importación inicial desde la hoja «Finanzas_Personales_v2» (lo que había en la web de Finanzas)
-  if (!col.cfg?.importado && !movs().length) {
+  if (space.isOwner && !col.cfg?.importado && !movs().length) {
     col.put({ id: 'imp-nkvcvaf2nkbuimioltb9', kind: 'mov', nombre: 'Viaje Pedro JMJ Korea', tipo: ['egreso'], fecha: '2026-11-15', rep: ['puntual'], importe: 300, cat: [slug('Ocio y estilo de vida')], sub: [slug('Viajes')], estado: ['previsto'], created: Date.parse('2026-11-15'), valores: {} }, {});
     col.setCfg({ ...(col.cfg || {}), importado: true });
   }

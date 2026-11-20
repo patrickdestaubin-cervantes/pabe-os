@@ -3,6 +3,7 @@
 // · Compromisos: Tabla PABE para editarlos y añadir propiedades.
 // · One Thing: su 4-1-1, el GPS y la Someday Letter (filosofía The ONE Thing), editables tecleando o a mano y mostrados con su letra.
 // El aviso: número de pendientes en el icono del carril y, si PABE está abierto, un aviso a la hora de cada compromiso.
+import { space } from '../space.js';
 import { plainClick } from '../ui.js';
 import { collection, tags, on, sync } from '../store.js';
 import { supa } from '../supa.js';
@@ -93,6 +94,7 @@ function reordenar(ids) {
 }
 // primeros compromisos (los que dijo Patrick); los puede cambiar o borrar
 function seedItems() {
+  if (!space.isOwner) return; // las demás personas empiezan su Orden del día desde cero
   if (!col.cfg?.sembrado && !items().length) {
     [['Acostarme a la hora, sin quedarme trabajando', { hora: '23:00', ambito: ['descanso'], detalle: 'Cerrar el ordenador y a dormir.' }],
      ['Un gesto de cariño a Berna', { ambito: ['familia'] }],
