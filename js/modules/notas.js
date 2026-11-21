@@ -3,6 +3,7 @@ import { collection, tags, files, on, syncNow } from '../store.js';
 import { createTable, pickColor, tagChip, PALETTE } from '../tabla.js';
 import { plainClick, fitPop } from '../ui.js';
 import { agente } from '../agente.js';
+import { loadHandFont } from '../handfont.js';
 import { space as who } from '../space.js';
 import { createSheet, importWorkbook, exportWorkbook, sheetFromRows, sheetTSV, newSheet, fmtVal } from '../hoja.js';
 const TXT = 18; // tamaño de letra estándar de todos los cuadros de texto
@@ -123,7 +124,7 @@ function saveNow() {
    · Con el lazo: al rodear letra a mano se copia sola como texto (para pegarla en WhatsApp, correo…).
    · En segundo plano: cada hoja con letra a mano se transcribe sola (unos segundos después de dejar de escribir)
      y ese texto entra en la búsqueda, la columna Contenido y el asistente. */
-const HW_SYS = 'Eres un transcriptor. Transcribe exactamente el texto manuscrito de las imágenes (normalmente en español, a veces en inglés o francés), en orden de arriba abajo; las imágenes son trozos consecutivos de la misma hoja. Respeta los saltos de línea. Las viñetas escríbelas como "• ". Corrige solo lo imprescindible para que sean palabras reales. No añadas comentarios, títulos, comillas ni explicaciones. Ignora dibujos y garabatos. Si no hay texto legible, responde con una cadena vacía.';
+const HW_SYS = 'Eres un transcriptor. Transcribe exactamente el texto manuscrito de las imágenes, en orden de arriba abajo; las imágenes son trozos consecutivos de la misma hoja. El autor escribe en mayúsculas y mezcla idiomas: sobre todo español, pero con frecuencia frases o palabras sueltas en inglés (y a veces francés). Reconoce cada palabra en su idioma: si una palabra se lee como inglesa (p. ej. GOAL, MEETING, CASH FLOW, STRENGTHEN, BOND, SALES, BUILT, FOLLOW UP), transcríbela en inglés tal cual, sin traducirla ni «corregirla» a una palabra española parecida. Respeta los saltos de línea. Las viñetas escríbelas como "• ". Pon la tilde que corresponda en español aunque no se vea. Devuelve el texto en minúsculas con mayúscula inicial de frase y en los nombres propios. No añadas comentarios, títulos, comillas ni explicaciones. Ignora dibujos y garabatos. Si no hay texto legible, responde con una cadena vacía.';
 const blobB64 = b => new Promise((ok, ko) => { const f = new FileReader(); f.onload = () => ok(String(f.result).split(',')[1]); f.onerror = ko; f.readAsDataURL(b); });
 // Parte los trazos en franjas horizontales (por los huecos entre renglones) para que cada imagen se lea bien
 function bands(list, maxH = 700) {
@@ -340,7 +341,14 @@ async function savePdf(it) {
    PABE usa tu «alfabeto personal», que escribes una vez (cada letra, número y signo) en «Enseñar mi letra». */
 const GLYPH_CHARS = 'ABCDEFGHIJKLMNÑOPQRSTUVWXYZ0123456789.,:;?¿!¡()-/€@%+´';
 let glyphs = null; // { 'A': { s: [[x,y,w,…], …], adv } } en unidades de «altura de mayúscula» (1 = de la línea de arriba a la de base)
-async function loadGlyphs() { const c = await col.getCfg(); glyphs = prepGlyphs(c.glyphs || {}); return glyphs; }
+let fontSig = '';
+async function loadGlyphs() {
+  const c = await col.getCfg(); glyphs = prepGlyphs(c.glyphs || {});
+  // los cuadros de texto se ven con tu letra: se fabrica una fuente con tu alfabeto (solo si cambió)
+  const sig = Object.keys(c.glyphs || {}).sort().join('') + ':' + JSON.stringify(c.glyphs || {}).length;
+  if (sig !== fontSig) { fontSig = sig; loadHandFont(glyphs); }
+  return glyphs;
+}
 // Limpia cada letra antes de usarla: quita puntitos y toques sueltos (que separaban las letras y dejaban puntos en medio)
 // y calcula su ancho solo con los trazos de verdad. En signos de puntuación y tildes se respeta todo.
 const PUNCT = '.,:;?¿!¡´%';
@@ -365,7 +373,7 @@ function prepGlyphs(src) {
   if (!out['´']) out['´'] = { auto: true, adv: .28, s: [[.05, -.02, 1, .16, -.14, 1, .28, -.26, 1]] }; // tilde sencilla si no la escribiste
   return out;
 }
-async function saveGlyphs(g) { glyphs = prepGlyphs(g); const c = await col.getCfg(); await col.setCfg({ ...c, glyphs: g }); }
+async function saveGlyphs(g) { const c = await col.getCfg(); await col.setCfg({ ...c, glyphs: g }); await loadGlyphs(); }
 const rnd = (a, b) => a + Math.random() * (b - a);
 function glyphFor(ch) {
   if (glyphs[ch]) return [glyphs[ch]];
@@ -597,7 +605,7 @@ function mkPath(s) {
 const size = b => b > 1e6 ? (b / 1e6).toFixed(1) + ' MB' : Math.max(1, Math.round(b / 1e3)) + ' KB';
 function itemHtml(i) {
   const pos = `left:${i.x}px;top:${i.y}px`;
-  if (i.t === 'x') return `<div class="it tx" data-id="${i.id}" style="${pos};font-size:${TXT}px${i.mw ? `;max-width:${i.mw}px` : ''}" spellcheck="false">${esc(i.s)}</div>`;
+  if (i.t === 'x') return `<div class="it tx${i.kb ? ' kb' : ''}" data-id="${i.id}" style="${pos};font-size:${TXT}px${i.mw ? `;max-width:${i.mw}px` : ''}" spellcheck="false">${esc(i.s)}</div>`;
   if (i.t === 'tb') return `<div class="it tbl" data-id="${i.id}" style="${pos};width:${i.w || 680}px"><div class="tbl-h"><span>⋮⋮</span><input class="tbl-name" value="${esc(i.n || '')}" placeholder="Tabla sin título" aria-label="Nombre de la tabla"></div><div class="tbl-body tb-host"></div><span class="rz"></span></div>`;
   if (i.t === 'xl') return `<div class="it xl" data-id="${i.id}" style="${pos};width:${i.w || 760}px;height:${i.h || 400}px"><div class="xl-h"><span class="xl-grip" title="Arrastra para mover">⋮⋮</span><span class="xl-badge">XLS</span><input class="xl-name" value="${esc(i.n || '')}" placeholder="Hoja de cálculo" aria-label="Nombre de la hoja de cálculo"><span class="xl-st"></span><button class="xl-b" data-xa="filter" title="Filtrar y ordenar por columnas (la fila seleccionada es la cabecera)">Filtro</button><button class="xl-b" data-xa="more" aria-label="Más opciones" title="Filas, columnas, hojas, descargar">⋯</button></div><div class="xl-body"></div><span class="rz"></span></div>`;
   if (i.t === 'pdf') return `<div class="it pdf" data-id="${i.id}" style="${pos};width:${i.w || 600}px"><div class="pdf-h"><span class="pdf-grip" title="Arrastra para mover">⋮⋮</span><span class="xl-badge pdf-badge">PDF</span><span class="pdf-n">${esc(i.f.n.replace(/\.pdf$/i, ''))}</span><button class="pdf-b" data-pa="pager" title="Ver página a página">Página a página</button><button class="pdf-b" data-pa="save" title="Guarda en tu Drive una copia con tus anotaciones (el original no se toca)">Guardar en Drive</button><button class="pdf-b" data-pa="open" aria-label="Abrir el PDF original" title="Abrir el original">↗</button></div><div class="pdf-pages">${(i.ps || [[595, 842]]).map((p, k) => `<div class="pdf-pg" data-pg="${k}" style="height:${rd((i.w || 600) * p[1] / p[0])}px"><canvas></canvas></div>`).join('')}</div><span class="rz"></span></div>`;
@@ -714,6 +722,7 @@ function showMenu(kind, pt) {
     if (one?.t === 'x') b.push(['edit', 'Editar']);
     b.push(['copy', 'Copiar'], ['cut', 'Cortar'], ['dup', 'Duplicar']);
     if (list.some(i => i.t === 's')) b.push(['copytx', 'Copiar como texto'], ['tidy', 'Ordenar letra']);
+    if (list.some(i => i.t === 'x') && document.documentElement.classList.contains('mano-font')) b.push(['kbfont', list.filter(i => i.t === 'x').every(i => i.kb) ? 'Ver con mi letra' : 'Letra de teclado']);
     if (one?.t === 'f' && SHEET_RE.test(one.f.n)) b.push(['embed', 'Abrir como hoja']);
     if (one?.t === 'xl') b.push(['xlsx', 'Descargar Excel']);
     if (list.length < items().length) b.push(['all', 'Todo']);
@@ -739,6 +748,7 @@ function menuAction(k) {
   if (k === 'edit') { const it = selItems()[0], el = it && itemsEl.querySelector(`[data-id="${it.id}"]`); if (el) edit(el); }
   if (k === 'copy') copySel(false);
   if (k === 'copytx') copyHandText(selItems());
+  if (k === 'kbfont') { const tx = selItems().filter(i => i.t === 'x'), on = !tx.every(i => i.kb); snap(); tx.forEach(i => { if (on) i.kb = true; else delete i.kb; }); renderItems(); dirty(); flash(on ? 'Con letra de teclado' : 'Con tu letra'); }
   if (k === 'tidy') tidyAll(selItems());
   if (k === 'cut') copySel(true);
   if (k === 'dup') dupSel();
@@ -1400,6 +1410,7 @@ export async function mount(el, opts = {}) {
   caret = document.createElement('div'); caret.className = 'nt-caret'; caret.hidden = true; world.appendChild(caret);
   const sb = document.createElement('div'); sb.className = 'nt-selbox'; sb.hidden = true; world.appendChild(sb);
   await col.init(); await tags.init(); tags.system(SYS, 'Áreas');
+  loadGlyphs().catch(() => {}); // tu letra para los cuadros de texto
   buildTable(); syncTools(); newNote();
 
   // el navegador no debe desplazar el lienzo al enfocar un campo (tablas, textos): solo se mueve con la cámara

@@ -504,3 +504,5 @@ path.mk{mix-blend-mode:multiply}@media (prefers-color-scheme:dark){path.mk{mix-b
 .nt-sharepop{position:fixed;z-index:60;width:min(300px,calc(100vw - 24px));padding:10px;border-radius:12px;background:var(--pop);border:1px solid var(--line);box-shadow:var(--shadow)}
 .nt-sharepop h4{margin:2px 4px 8px;font-size:13px}.nt-sharepop .sh-row{display:flex;align-items:center;gap:8px;padding:8px 6px;border-radius:8px;font-size:14px}.nt-sharepop .sh-row:hover{background:var(--soft)}
 .nt-sharepop .pad{padding:4px 6px;font-size:12px}.nt-sharepop .btn{width:100%;margin-top:6px}
+/* «Mi letra»: los cuadros de texto se ven con la letra del usuario (fuente fabricada con su alfabeto); .kb = letra de teclado */
+html.mano-font .tx:not(.kb){font-family:'PabeMano',var(--font,system-ui),sans-serif;letter-spacing:.01em}
