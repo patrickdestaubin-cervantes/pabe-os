@@ -9,7 +9,11 @@ const col = collection('calendario');
 const SYS = 'calendario';
 const TZ = 'Europe/Madrid';
 const EMPRESA = 'patrick@ishomesstudio.com';
-const DAY = 864e5, HOUR_PX = 64; // alto de cada hora (más aire para leer el texto de los eventos)
+const DAY = 864e5;
+// Alto de cada hora. Por defecto se ajusta para que quepa todo el horario con eventos de la semana sin desplazar;
+// pellizcando con dos dedos (o Ctrl + rueda / pellizco en el trackpad) se agranda para leer el detalle.
+let hpx = 48, zoomed = false;
+const HMIN = 20, HMAX = 140;
 const EVCOL = { 1: '#7986cb', 2: '#33b679', 3: '#8e24aa', 4: '#e67c73', 5: '#f6bf26', 6: '#f4511e', 7: '#039be5', 8: '#616161', 9: '#3f51b5', 10: '#0b8043', 11: '#d50000' };
 const $ = (s, r = document) => r.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -195,8 +199,13 @@ function render() {
   const keep = body.querySelector('.cal-scroll')?.scrollTop;
   root.querySelector('.cal-mv')?.remove();
   body.innerHTML = view === 'mes' ? monthHTML() : gridHTML(visibleDays());
-  const sc = body.querySelector('.cal-scroll');
+  let sc = body.querySelector('.cal-scroll');
+  if (sc && !zoomed && sc.clientHeight > 0) {
+    const [st, en] = eventSpan(), fit = Math.max(HMIN, Math.min(90, sc.clientHeight / (en - st)));
+    if (Math.abs(fit - hpx) > 0.5) { hpx = fit; body.innerHTML = gridHTML(visibleDays()); sc = body.querySelector('.cal-scroll'); }
+  }
   if (sc) {
+    setupPinch(sc);
     if (autoScroll || keep == null) sc.scrollTop = firstHourPx();
     else sc.scrollTop = keep;
     // si Patrick mueve la vista a mano, se respeta hasta que cambie de día/semana o vuelva a entrar
@@ -219,13 +228,28 @@ function visibleDays() {
   }
   return [];
 }
+function eventSpan() {
+  const days = visibleDays(); if (!days.length) return [8, 20];
+  const a = days[0], b = addDays(days[days.length - 1], 1);
+  let lo = 24, hi = 0;
+  for (const e of visibleEvents()) if (!e.allDay && e.end - e.start < DAY && inRange(e, a, b)) {
+    const s0 = new Date(Math.max(e.start, a)), e0 = Math.min(Math.max(e.end, e.start + 15 * 6e4), b);
+    const sh = s0.getHours() + s0.getMinutes() / 60, ed = new Date(e0), eh = e0 >= day0(e.start) + DAY && ed.getHours() === 0 ? 24 : ed.getHours() + ed.getMinutes() / 60;
+    lo = Math.min(lo, sh); hi = Math.max(hi, eh);
+  }
+  if (lo > hi) return [8, 20];
+  let st = Math.max(0, Math.floor(lo - 0.25)), en = Math.min(24, Math.ceil(hi + 0.25));
+  if (en - st < 6) en = Math.min(24, st + 6), st = Math.max(0, en - 6);
+  return [st, en];
+}
 function firstHourPx() {
+  if (!zoomed) return eventSpan()[0] * hpx;
   const days = visibleDays(); if (!days.length) return 0;
   const a = days[0], b = addDays(days[days.length - 1], 1);
   let h = 24;
   for (const e of visibleEvents()) if (!e.allDay && e.end - e.start < DAY && inRange(e, a, b)) { const st = Math.max(e.start, day0(e.start)); const d = new Date(st); h = Math.min(h, d.getHours() + d.getMinutes() / 60); }
   if (h === 24) h = 8.5;
-  return Math.max(0, (h - 0.5) * HOUR_PX);
+  return Math.max(0, (h - 0.5) * hpx);
 }
 
 function evChip(e, extra = '') {
@@ -249,21 +273,21 @@ function gridHTML(days) {
   const evs = visibleEvents(), today = day0(Date.now()), now = new Date();
   const head = days.map(d => `<div class="cal-dh${d === today ? ' today' : ''}" data-day="${d}"><span>${fWd.format(d)}</span><b>${new Date(d).getDate()}</b></div>`).join('');
   const allday = days.map(d => { const a = evs.filter(e => (e.allDay || e.end - e.start >= DAY) && inRange(e, d, addDays(d, 1))); return `<div class="cal-ad" data-adday="${d}">${a.map(e => evChip(e, 'blk')).join('')}</div>`; }).join('');
-  const hours = Array.from({ length: 24 }, (_, h) => `<div class="cal-h"><span>${h ? pad(h) + ':00' : ''}</span></div>`).join('');
+  const hours = Array.from({ length: 24 }, (_, h) => `<div class="cal-h${hpx < 30 && h % 2 ? ' odd' : ''}"><span>${h ? pad(h) + ':00' : ''}</span></div>`).join('');
   const cols = days.map((d, di) => {
     const d1 = addDays(d, 1);
     const list = layoutDay(evs.filter(e => !e.allDay && e.end - e.start < DAY && inRange(e, d, d1)).map(ev => ({ ev, s: Math.max(ev.start, d), e: Math.min(Math.max(ev.end, ev.start + 15 * 6e4), d1) })));
     const items = list.map(x => {
-      const top = (x.s - d) / 36e5 * HOUR_PX, h = Math.max(20, (x.e - x.s) / 36e5 * HOUR_PX - 2), w = 100 / x.n;
-      return `<button class="cal-tev${h < 30 ? ' tiny' : ''}" data-ev="${esc(x.ev.key)}" style="--c:${colorOf(x.ev)};top:${top}px;height:${h}px;left:calc(${x.col * w}% + 1px);width:calc(${w}% - 3px)"><b>${esc(x.ev.title)}</b><span>${hm(x.ev.start)} – ${hm(x.ev.end)}${x.ev.loc ? ' · ' + esc(x.ev.loc) : ''}</span></button>`;
+      const hs = (x.s - d) / 36e5, hd = (x.e - x.s) / 36e5, h = Math.max(18, hd * hpx - 2), w = 100 / x.n;
+      return `<button class="cal-tev${h < 30 ? ' tiny' : ''}" data-ev="${esc(x.ev.key)}" style="--c:${colorOf(x.ev)};top:calc(${hs} * var(--h));height:max(18px, calc(${hd} * var(--h) - 2px));left:calc(${x.col * w}% + 1px);width:calc(${w}% - 3px)"><b>${esc(x.ev.title)}</b><span>${hm(x.ev.start)} – ${hm(x.ev.end)}${x.ev.loc ? ' · ' + esc(x.ev.loc) : ''}</span></button>`;
     }).join('');
-    const nowLine = d === today ? `<div class="cal-now" style="top:${(now.getHours() + now.getMinutes() / 60) * HOUR_PX}px"></div>` : '';
+    const nowLine = d === today ? `<div class="cal-now" style="top:calc(${now.getHours() + now.getMinutes() / 60} * var(--h))"></div>` : '';
     return `<div class="cal-col${d === today ? ' today' : ''}" data-col="${d}" style="grid-column:${di + 2}">${items}${nowLine}</div>`;
   }).join('');
-  return `<div class="cal-grid" style="--n:${days.length}">
-   <div class="cal-ghead"><div class="cal-gut"></div>${head}</div>
+  return `<div class="cal-grid" style="--n:${days.length};--h:${hpx}px">
+   <div class="cal-ghead"><div class="cal-gut">${zoomed ? '<button class="cal-fit" data-fit title="Ver todo el horario de una vez" aria-label="Ver todo el horario">⤢</button>' : ''}</div>${head}</div>
    <div class="cal-gall"><div class="cal-gut"><span>todo el día</span></div>${allday}</div>
-   <div class="cal-scroll"><div class="cal-gbody" style="height:${24 * HOUR_PX}px"><div class="cal-hours">${hours}</div>${cols}</div></div>
+   <div class="cal-scroll"><div class="cal-gbody" style="height:calc(24 * var(--h))"><div class="cal-hours">${hours}</div>${cols}</div></div>
   </div>`;
 }
 
@@ -413,13 +437,13 @@ function slotAt(x, y) {
   const col = document.elementsFromPoint(x, y).map(n => n.closest?.('[data-col]')).find(Boolean);
   if (!col) return null;
   const r = col.getBoundingClientRect();
-  return { col, day: +col.dataset.col, mins: (y - r.top) / HOUR_PX * 60 };
+  return { col, day: +col.dataset.col, mins: (y - r.top) / hpx * 60 };
 }
 function ghost(col, startMin, durMin, label, cls = '') {
   root.querySelectorAll('.cal-ghost').forEach(g => g.remove());
   const g = document.createElement('div');
   g.className = 'cal-ghost ' + cls;
-  g.style.top = startMin / 60 * HOUR_PX + 'px'; g.style.height = Math.max(20, durMin / 60 * HOUR_PX - 2) + 'px';
+  g.style.top = startMin / 60 * hpx + 'px'; g.style.height = Math.max(20, durMin / 60 * hpx - 2) + 'px';
   g.innerHTML = label; col.appendChild(g); return g;
 }
 function setupPointer(el) {
@@ -440,6 +464,7 @@ function setupPointer(el) {
     ghost(s.col, st, dur, `<b>${esc(p.ev.title)}</b><span>${fmtSlot(s.day, st)} – ${fmtSlot(s.day, st + dur)}</span>`, 'mv');
   };
   el.addEventListener('pointerdown', e => {
+    if (p && p.id !== e.pointerId) { cancel(); return; } // segundo dedo = pellizco
     if (e.button > 0 || !e.target.closest('.cal-scroll') || e.target.closest('.cal-mv')) return;
     cancel();
     const evEl = e.target.closest('.cal-tev');
@@ -476,7 +501,7 @@ function setupPointer(el) {
       return;
     }
     // toque en un hueco vacío → evento nuevo
-    if (e.target.closest('.cal-tev,.cal-mv') || Date.now() - q.t > 700) return;
+    if (pinching || e.target.closest('.cal-tev,.cal-mv,.cal-fit') || Date.now() - q.t > 700) return;
     const s = slotAt(e.clientX, e.clientY); if (!s) return;
     const st = Math.max(0, Math.min(23.5 * 60, Math.floor(s.mins / 30) * 30));
     swallowClick = Date.now() + 400;
@@ -496,6 +521,29 @@ function confirmMove(ev, ns) {
 }
 const cap1 = x => x.charAt(0).toUpperCase() + x.slice(1);
 
+/* =================== zoom (pellizcar) =================== */
+let pinching = false;
+function zoomTo(sc, nh, fy) { // fy: y del punto fijo dentro de la vista
+  nh = Math.max(HMIN, Math.min(HMAX, nh)); if (Math.abs(nh - hpx) < 0.2) return;
+  const hourAt = (sc.scrollTop + fy) / hpx;
+  hpx = nh; zoomed = true; autoScroll = false;
+  sc.closest('.cal-grid').style.setProperty('--h', hpx + 'px');
+  sc.scrollTop = hourAt * hpx - fy;
+}
+let rerenderT; const settle = () => { clearTimeout(rerenderT); rerenderT = setTimeout(() => render(), 250); };
+function setupPinch(sc) {
+  let d0 = 0, h0 = 0;
+  const dist = t => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+  const mid = t => (t[0].clientY + t[1].clientY) / 2 - sc.getBoundingClientRect().top;
+  sc.addEventListener('touchstart', e => { if (e.touches.length === 2) { pinching = true; d0 = dist(e.touches); h0 = hpx; } }, { passive: true });
+  sc.addEventListener('touchmove', e => { if (e.touches.length === 2 && d0) { e.preventDefault(); zoomTo(sc, h0 * dist(e.touches) / d0, mid(e.touches)); } }, { passive: false });
+  sc.addEventListener('touchend', e => { if (d0 && e.touches.length < 2) { d0 = 0; settle(); setTimeout(() => { pinching = false; }, 300); } });
+  // ordenador: Ctrl + rueda o pellizco en el trackpad
+  sc.addEventListener('wheel', e => { if (!e.ctrlKey) return; e.preventDefault(); zoomTo(sc, hpx * Math.exp(-e.deltaY * 0.01), e.clientY - sc.getBoundingClientRect().top); settle(); }, { passive: false });
+  // Safari (iPad): que el pellizco no amplíe toda la página
+  ['gesturestart', 'gesturechange'].forEach(t => sc.addEventListener(t, e => e.preventDefault()));
+}
+
 /* =================== montaje =================== */
 export async function mount(el) {
   root = el; el.innerHTML = HTML; toast = document.getElementById('toast');
@@ -514,6 +562,7 @@ export async function mount(el) {
     if (e.target.closest('#calCals')) return openCals(e.target.closest('#calCals'));
     if (!e.target.closest('#calPop')) $('#calPop', root).hidden = true;
     if (Date.now() < swallowClick) return;
+    if (e.target.closest('[data-fit]')) { zoomed = false; autoScroll = true; render(); return; }
     const ev = e.target.closest('[data-ev]'); if (ev) { const x = events.get(ev.dataset.ev); if (x) openEditor(x); return; }
     const gd = e.target.closest('[data-goday]'); if (gd) { cursor = +gd.dataset.goday; setView('dia'); return; }
     const dh = e.target.closest('[data-day]'); if (dh) { cursor = +dh.dataset.day; setView('dia'); return; }
@@ -524,7 +573,7 @@ export async function mount(el) {
   // deslizar a izquierda/derecha para cambiar de día/semana/mes (móvil y tablet)
   let sx = null, sy = null;
   el.addEventListener('touchstart', e => { if (e.target.closest('.cal-ed,.cal-tbl,.pop')) { sx = null; return; } sx = e.touches[0].clientX; sy = e.touches[0].clientY; }, { passive: true });
-  el.addEventListener('touchend', e => { if (sx == null) return; if (dragActive || Date.now() < swallowClick) { sx = null; return; } const dx = e.changedTouches[0].clientX - sx, dy = e.changedTouches[0].clientY - sy; if (Math.abs(dx) > 70 && Math.abs(dx) > Math.abs(dy) * 1.5) go(dx < 0 ? 1 : -1); sx = null; }, { passive: true });
+  el.addEventListener('touchend', e => { if (sx == null) return; if (dragActive || pinching || Date.now() < swallowClick) { sx = null; return; } const dx = e.changedTouches[0].clientX - sx, dy = e.changedTouches[0].clientY - sy; if (Math.abs(dx) > 70 && Math.abs(dx) > Math.abs(dy) * 1.5) go(dx < 0 ? 1 : -1); sx = null; }, { passive: true });
   document.addEventListener('keydown', e => {
     if (!root.isConnected || root.closest('[hidden]') || e.target.closest('input,textarea,select,[contenteditable]') || editing) return;
     if (e.key === 'ArrowLeft') go(-1); else if (e.key === 'ArrowRight') go(1);
@@ -539,9 +588,9 @@ export async function mount(el) {
   // al volver a la pestaña y cada minuto, traer cambios hechos desde Google Calendar
   clearInterval(refreshT); refreshT = setInterval(() => { if (gcal.ready && document.visibilityState === 'visible' && !editing) refresh(); }, 60000);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && gcal.ready) refresh(); });
-  setInterval(() => { if (!editing && (view === 'dia' || view === 'semana' || view === 'laboral')) { const n = root.querySelector('.cal-now'); if (n) { const d = new Date(); n.style.top = (d.getHours() + d.getMinutes() / 60) * HOUR_PX + 'px'; } } }, 60000);
+  setInterval(() => { if (!editing && (view === 'dia' || view === 'semana' || view === 'laboral')) { const n = root.querySelector('.cal-now'); if (n) { const d = new Date(); n.style.top = `calc(${d.getHours() + d.getMinutes() / 60} * var(--h))`; } } }, 60000);
 }
-export function enter() { autoScroll = true; render(); if (gcal.ready) refresh(); }
+export function enter() { autoScroll = true; zoomed = false; render(); if (gcal.ready) refresh(); }
 // #calendario/dia|laboral|semana|mes|tabla · #calendario/nuevo (se pueden abrir en otra pestaña)
 export function route(sub) { if (sub === 'nuevo') return newEvent(); if (!['dia', 'laboral', 'semana', 'mes', 'tabla'].includes(sub)) return; setView(sub); if (location.hash.startsWith('#calendario')) history.replaceState(null, '', '#calendario/' + sub); }
 export function newEvent() { const n = new Date(); n.setMinutes(0, 0, 0); openEditor(newDraft((view === 'dia' || view === 'semana' || view === 'laboral') && cursor !== day0(Date.now()) ? cursor + 10 * 36e5 : n.getTime() + 36e5, false)); }
