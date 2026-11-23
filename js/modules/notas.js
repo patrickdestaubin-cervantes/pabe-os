@@ -250,14 +250,17 @@ async function tidyAll(only) {
     const cnt = {}; ink.forEach(i => { cnt[i.c] = (cnt[i.c] || 0) + 1; }); const col0 = Object.keys(cnt).sort((a, b) => cnt[b] - cnt[a])[0];
     const ws = ink.map(i => i.w).filter(Boolean).sort((a, b) => a - b), w0 = ws[ws.length >> 1];
     const opt = { Hc, step: Math.max(r.step, Math.ceil(Hc * 1.7 / 24) * 24), c: col0, w: w0 };
+    // el color de cada renglón se mantiene (el que más se usó en ese renglón)
+    const byId = new Map(ink.map(i => [i.id, i]));
+    const lineCol = r.lines.map(L0 => { const c = {}; L0.ids.forEach(id => { const i = byId.get(id); if (i) c[i.c] = (c[i.c] || 0) + (i.p?.length || 1); }); return Object.keys(c).sort((a, b) => c[b] - c[a])[0] || col0; });
     const newIds = [];
     const put = (t, pos) => { const n0 = items().length; const p2 = writeHand(t, pos, opt); items().slice(n0).forEach(i => newIds.push(i.id)); return p2; };
     if (tl.length === r.lines.length) { // cada renglón en su sitio
-      tl.forEach((t, k) => put(t, { x: r.lines[k].x1, x0: r.lines[k].x1, y: r.lines[k].base, maxX: Infinity }));
+      tl.forEach((t, k) => { opt.c = lineCol[k]; put(t, { x: r.lines[k].x1, x0: r.lines[k].x1, y: r.lines[k].base, maxX: Infinity }); });
     } else {                              // si no cuadran los renglones, todo seguido desde el primero
       const x0 = Math.min(...r.lines.map(L0 => L0.x1)), maxX = Math.max(x0 + 400, ...ink.map(i => bboxOf(i).x2));
       let pos = { x: x0, x0, y: r.lines[0].base, maxX };
-      tl.forEach(t => { pos = put(t, pos); pos = { ...pos, x: x0, y: pos.y + opt.step }; });
+      tl.forEach((t, k) => { opt.c = lineCol[Math.min(lineCol.length - 1, Math.round(k * lineCol.length / tl.length))]; pos = put(t, pos); pos = { ...pos, x: x0, y: pos.y + opt.step }; });
     }
     if (only && only.length) { sel = new Set(newIds); markSel(); }
     renderItems(); dirty(); flash('Ordenada y con tu letra · ↶ para deshacer');
@@ -605,7 +608,7 @@ function mkPath(s) {
 const size = b => b > 1e6 ? (b / 1e6).toFixed(1) + ' MB' : Math.max(1, Math.round(b / 1e3)) + ' KB';
 function itemHtml(i) {
   const pos = `left:${i.x}px;top:${i.y}px`;
-  if (i.t === 'x') return `<div class="it tx${i.kb ? ' kb' : ''}" data-id="${i.id}" style="${pos};font-size:${TXT}px${i.mw ? `;max-width:${i.mw}px` : ''}" spellcheck="false">${esc(i.s)}</div>`;
+  if (i.t === 'x') return `<div class="it tx${i.kb ? ' kb' : ''}" data-id="${i.id}" style="${pos};font-size:${TXT}px${i.c && i.c !== 'ink' ? `;color:${penCss(i.c)}` : ''}${i.mw ? `;max-width:${i.mw}px` : ''}" spellcheck="false">${esc(i.s)}</div>`;
   if (i.t === 'tb') return `<div class="it tbl" data-id="${i.id}" style="${pos};width:${i.w || 680}px"><div class="tbl-h"><span>⋮⋮</span><input class="tbl-name" value="${esc(i.n || '')}" placeholder="Tabla sin título" aria-label="Nombre de la tabla"></div><div class="tbl-body tb-host"></div><span class="rz"></span></div>`;
   if (i.t === 'xl') return `<div class="it xl" data-id="${i.id}" style="${pos};width:${i.w || 760}px;height:${i.h || 400}px"><div class="xl-h"><span class="xl-grip" title="Arrastra para mover">⋮⋮</span><span class="xl-badge">XLS</span><input class="xl-name" value="${esc(i.n || '')}" placeholder="Hoja de cálculo" aria-label="Nombre de la hoja de cálculo"><span class="xl-st"></span><button class="xl-b" data-xa="filter" title="Filtrar y ordenar por columnas (la fila seleccionada es la cabecera)">Filtro</button><button class="xl-b" data-xa="more" aria-label="Más opciones" title="Filas, columnas, hojas, descargar">⋯</button></div><div class="xl-body"></div><span class="rz"></span></div>`;
   if (i.t === 'pdf') return `<div class="it pdf" data-id="${i.id}" style="${pos};width:${i.w || 600}px"><div class="pdf-h"><span class="pdf-grip" title="Arrastra para mover">⋮⋮</span><span class="xl-badge pdf-badge">PDF</span><span class="pdf-n">${esc(i.f.n.replace(/\.pdf$/i, ''))}</span><button class="pdf-b" data-pa="pager" title="Ver página a página">Página a página</button><button class="pdf-b" data-pa="save" title="Guarda en tu Drive una copia con tus anotaciones (el original no se toca)">Guardar en Drive</button><button class="pdf-b" data-pa="open" aria-label="Abrir el PDF original" title="Abrir el original">↗</button></div><div class="pdf-pages">${(i.ps || [[595, 842]]).map((p, k) => `<div class="pdf-pg" data-pg="${k}" style="height:${rd((i.w || 600) * p[1] / p[0])}px"><canvas></canvas></div>`).join('')}</div><span class="rz"></span></div>`;
@@ -1047,6 +1050,43 @@ function pw(e) { const W = baseW(), pr = e.pointerType === 'pen' && e.pressure >
 function newStroke(w, e) { const s = { id: gid(), t: 's', k: kind, c: pen, w: rd2(baseW()) }; if (kind === 'brush') { s.v = 2; s.p = [rd(w.x), rd(w.y), rd2(bw(e, 0) * .95)]; }
   else if (kind === 'pencil') { s.v = 2; s.p = [rd(w.x), rd(w.y), rd2(pw(e))]; s.prs = [e.pointerType === 'pen' && e.pressure > 0 ? e.pressure : .6]; s.o = .7; ensureGraphite(); } else s.p = [rd(w.x), rd(w.y)]; return s; }
 function cancelAct() { if (act && act.k === 'draw') { cur.doc.tabs[cur.tab] = items().filter(i => i !== act.s); act.el.remove(); hist.pop(); } act = null; }
+
+/* ---------- tocar un renglón escrito a mano lo selecciona entero ---------- */
+// trazo bajo el dedo o el lápiz (con un margen cómodo)
+function strokeAt(w, pad = 8) {
+  const r = pad / cam.k; let best = null, bd = Infinity;
+  for (const i of items()) {
+    if (i.t !== 's') continue; const st = i.v === 2 ? 3 : 2, p = i.p, closed = i.sh === 'rect' || i.sh === 'ell', n = p.length / st;
+    for (let j = 0; j < n; j++) {
+      const x1 = p[j * st], y1 = p[j * st + 1], k2 = j + 1 < n ? j + 1 : (closed ? 0 : j), x2 = p[k2 * st], y2 = p[k2 * st + 1], dx = x2 - x1, dy = y2 - y1, l = dx * dx + dy * dy;
+      const t = l ? Math.max(0, Math.min(1, ((w.x - x1) * dx + (w.y - y1) * dy) / l)) : 0, hw = (st === 3 ? p[j * st + 2] : i.w) / 2;
+      const d = Math.hypot(w.x - (x1 + t * dx), w.y - (y1 + t * dy)) - hw; if (d < r && d < bd) { bd = d; best = i; }
+    }
+  }
+  return best;
+}
+// el renglón al que pertenece un trazo: los trazos a su misma altura y seguidos (sin huecos grandes) a izquierda y derecha
+function lineOf(s0) {
+  const ink = items().filter(i => i.t === 's' && !i.sh), info = ink.map(i => { const b = bboxOf(i); return { i, b, cy: (b.y1 + b.y2) / 2, h: b.y2 - b.y1 }; });
+  const o0 = info.find(o => o.i === s0); if (!o0) return [s0];
+  const hs = info.map(o => o.h).filter(h => h > 4).sort((a, b) => a - b), H = Math.max(o0.h, hs[hs.length >> 1] || 20);
+  const band = info.filter(o => Math.abs(o.cy - o0.cy) < H * .62 || (o.h < H * .45 && o.cy > o0.b.y1 - H * .5 && o.cy < o0.b.y2 + H * .3));
+  band.sort((a, b) => a.b.x1 - b.b.x1);
+  let k = band.indexOf(o0), x1 = o0.b.x1, x2 = o0.b.x2; const out = [o0];
+  for (let j = k + 1; j < band.length; j++) { if (band[j].b.x1 - x2 > H * 2.6) break; out.push(band[j]); x2 = Math.max(x2, band[j].b.x2); }
+  for (let j = k - 1; j >= 0; j--) { if (x1 - band[j].b.x2 > H * 2.6) break; out.push(band[j]); x1 = Math.min(x1, band[j].b.x1); }
+  return out.map(o => o.i);
+}
+function selectLineAt(e) {
+  const s0 = strokeAt(toW(e)); if (!s0) return false;
+  sel = new Set(lineOf(s0).map(i => i.id)); hideCaret(); markSel(); showMenu('sel'); return true;
+}
+// cambiar el color de lo seleccionado (trazos y cuadros de texto) al elegir otro color de lápiz
+function recolorSel(c) {
+  const list = selItems().filter(i => i.t === 's' || i.t === 'x'); if (!list.length) return;
+  snap(); list.forEach(i => { i.c = c; }); renderItems(); markSel(); dirty();
+}
+
 function tapAt(e) { const w = toW(e); if (e.pointerType === 'touch') { addText(w); return; } if (isDouble(e, 'bg')) addText(w); else showCaret(w); }
 
 let lpT = null, lpAt = 0;
@@ -1112,7 +1152,7 @@ function onDown(e) {
   if (isTouch) { act = { k: 'pan', sx: e.clientX, sy: e.clientY, cam: { ...cam }, tap: true, touch: true }; armLongPress(e); return; }
   hideCaret(); snap();
   const s = newStroke(w, e); items().push(s); const el = mkPath(s); ink.appendChild(el);
-  act = { k: 'draw', s, el, isPen, touch: isTouch, lt: e.timeStamp, lx: e.clientX, ly: e.clientY, moved: 0 };
+  act = { k: 'draw', s, el, isPen, touch: isTouch, lt: e.timeStamp, lx: e.clientX, ly: e.clientY, moved: 0, t0: performance.now() };
   if (isTouch) armLongPress(e);
 }
 function onMove(e) {
@@ -1164,9 +1204,11 @@ function onUp(e) {
   act = null; const ok = e.type === 'pointerup';
   if (a.k === 'lasso') { a.el.remove(); if (ok && a.P.length >= 6) lassoSelect(a.P); else { lasso = false; syncTools(); } return; }
   if (a.k === 'movesel') { if (a.moved && ok) { selItems().forEach(i => shiftItem(i, a.dx, a.dy)); renderItems(); dirty(); showMenu('sel'); } else if (a.moved) renderItems(); else if (ok) { if (menuFor === 'sel') hideMenu(); else showMenu('sel'); } return; }
-  if (a.k === 'draw') { if (!a.isPen && a.moved < 4) { cur.doc.tabs[cur.tab] = items().filter(i => i !== a.s); a.el.remove(); hist.pop(); if (ok) tapAt(e); return; } act0v = a.v; if (a.s.k === 'brush' || a.s.k === 'pencil') { const p = a.s.p, end = toW(e), last = a.raw && Math.hypot(end.x - a.raw.x, end.y - a.raw.y) * cam.k < 40 ? end : a.raw; if (last) p.push(rd(last.x), rd(last.y), p[p.length - 1]); } finishStroke(a.s, a.el); dirty(); return; }
+  if (a.k === 'draw') { if (!a.isPen && a.moved < 4) { cur.doc.tabs[cur.tab] = items().filter(i => i !== a.s); a.el.remove(); hist.pop(); if (ok && !selectLineAt(e)) tapAt(e); return; }
+    // un toque corto con el Pencil encima de lo escrito selecciona ese renglón (en vacío sigue siendo un punto)
+    if (a.isPen && ok && a.moved < 3 && performance.now() - (a.t0 || 0) < 260) { const rest = items().filter(i => i !== a.s), keep = cur.doc.tabs[cur.tab]; cur.doc.tabs[cur.tab] = rest; if (strokeAt(toW(e), 3)) { a.el.remove(); hist.pop(); selectLineAt(e); return; } cur.doc.tabs[cur.tab] = keep; } act0v = a.v; if (a.s.k === 'brush' || a.s.k === 'pencil') { const p = a.s.p, end = toW(e), last = a.raw && Math.hypot(end.x - a.raw.x, end.y - a.raw.y) * cam.k < 40 ? end : a.raw; if (last) p.push(rd(last.x), rd(last.y), p[p.length - 1]); } finishStroke(a.s, a.el); dirty(); return; }
   if (a.k === 'pan' && a.tbl) return; // un toque en la tabla lo atiende la propia tabla
-  if (a.k === 'pan' && a.tap && ok) { tapAt(e); return; }
+  if (a.k === 'pan' && a.tap && ok) { if (!selectLineAt(e)) tapAt(e); return; }
   if (a.k === 'move') { if (a.moved) { if (a.att?.length) { a.att.forEach(s => shiftItem(s, a.adx, a.ady)); renderItems(); } dirty(); drawSelBox(); } else if (ok && a.it.t === 'x' && sel.size <= 1) editAt(a.el, e); else if (ok) showMenu('sel'); return; }
   if (a.k === 'resize' && a.snapped) { dirty(); if (a.it.t === 'pdf') renderItems(); }
   if (a.k === 'erase') { if (a.hit) dirty(); else hist.pop(); }
@@ -1469,7 +1511,7 @@ export async function mount(el, opts = {}) {
 
   $('#ntPenPop').addEventListener('click', e => {
     const b = e.target.closest('button'); if (!b) return;
-    if (b.dataset.pc) { pen = b.dataset.pc; L.set('pen', pen); $('#ntPenPop').hidden = true; }
+    if (b.dataset.pc) { pen = b.dataset.pc; L.set('pen', pen); $('#ntPenPop').hidden = true; recolorSel(pen); }
     if (b.dataset.ps) { const k = $('#ntPenPop').dataset.for; if (k === 'brush' || k === 'pencil' || k === 'mark') kind = k; sizes[kind] = +b.dataset.ps; L.set('sizes', sizes); L.set('kind', kind); lasso = false; $('#ntPenPop').hidden = true; }
     eraser = false; syncTools();
   });
