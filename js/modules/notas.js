@@ -608,7 +608,7 @@ function mkPath(s) {
 const size = b => b > 1e6 ? (b / 1e6).toFixed(1) + ' MB' : Math.max(1, Math.round(b / 1e3)) + ' KB';
 function itemHtml(i) {
   const pos = `left:${i.x}px;top:${i.y}px`;
-  if (i.t === 'x') return `<div class="it tx${i.kb ? ' kb' : ''}" data-id="${i.id}" style="${pos};font-size:${TXT}px${i.c && i.c !== 'ink' ? `;color:${penCss(i.c)}` : ''}${i.mw ? `;max-width:${i.mw}px` : ''}" spellcheck="false">${esc(i.s)}</div>`;
+  if (i.t === 'x') return `<div class="it tx${i.kb ? ' kb' : ''}" data-id="${i.id}" style="${pos};font-size:${TXT}px${i.c && i.c !== 'ink' ? `;color:${penCss(i.c)}` : ''}${i.mw ? `;max-width:${i.mw}px` : ''}" spellcheck="false">${txHtml(i)}</div>`;
   if (i.t === 'tb') return `<div class="it tbl" data-id="${i.id}" style="${pos};width:${i.w || 680}px"><div class="tbl-h"><span>⋮⋮</span><input class="tbl-name" value="${esc(i.n || '')}" placeholder="Tabla sin título" aria-label="Nombre de la tabla"></div><div class="tbl-body tb-host"></div><span class="rz"></span></div>`;
   if (i.t === 'xl') return `<div class="it xl" data-id="${i.id}" style="${pos};width:${i.w || 760}px;height:${i.h || 400}px"><div class="xl-h"><span class="xl-grip" title="Arrastra para mover">⋮⋮</span><span class="xl-badge">XLS</span><input class="xl-name" value="${esc(i.n || '')}" placeholder="Hoja de cálculo" aria-label="Nombre de la hoja de cálculo"><span class="xl-st"></span><button class="xl-b" data-xa="filter" title="Filtrar y ordenar por columnas (la fila seleccionada es la cabecera)">Filtro</button><button class="xl-b" data-xa="more" aria-label="Más opciones" title="Filas, columnas, hojas, descargar">⋯</button></div><div class="xl-body"></div><span class="rz"></span></div>`;
   if (i.t === 'pdf') return `<div class="it pdf" data-id="${i.id}" style="${pos};width:${i.w || 600}px"><div class="pdf-h"><span class="pdf-grip" title="Arrastra para mover">⋮⋮</span><span class="xl-badge pdf-badge">PDF</span><span class="pdf-n">${esc(i.f.n.replace(/\.pdf$/i, ''))}</span><button class="pdf-b" data-pa="pager" title="Ver página a página">Página a página</button><button class="pdf-b" data-pa="save" title="Guarda en tu Drive una copia con tus anotaciones (el original no se toca)">Guardar en Drive</button><button class="pdf-b" data-pa="open" aria-label="Abrir el PDF original" title="Abrir el original">↗</button></div><div class="pdf-pages">${(i.ps || [[595, 842]]).map((p, k) => `<div class="pdf-pg" data-pg="${k}" style="height:${rd((i.w || 600) * p[1] / p[0])}px"><canvas></canvas></div>`).join('')}</div><span class="rz"></span></div>`;
@@ -976,25 +976,85 @@ function syncTools() {
 const roomRight = x => (stage.clientWidth - cam.x) / cam.k - x - 16 / cam.k;
 function addText(w, initial) {
   hideCaret(); snap();
-  const t = { id: gid(), t: 'x', x: rd(w.x), y: rd(w.y - 14), s: '', z: TXT };
+  const t = { id: gid(), t: 'x', x: rd(w.x), y: rd(w.y - 14), s: '', z: TXT }; if (pen !== 'ink') t.c = pen; // se escribe con el color del lápiz
   const minW = 150 / cam.k; if (roomRight(t.x) < minW) t.x = rd(Math.max(-cam.x / cam.k + 12 / cam.k, (stage.clientWidth - cam.x) / cam.k - minW - 16 / cam.k));
   const room = roomRight(t.x); if (room < 560) t.mw = Math.round(Math.max(minW, room));
   items().push(t); renderItems();
   const el = itemsEl.querySelector(`[data-id="${t.id}"]`); edit(el); if (initial) document.execCommand('insertText', false, initial);
 }
-// Texto plano dentro de un cuadro: un solo nodo de texto, saltos de línea reales
-function splitAtCaret(el) {
-  const full = el.innerText.replace(/\n$/, ''), sel = getSelection();
-  if (!sel.rangeCount) return { before: full, after: '' };
-  const r = document.createRange(); r.selectNodeContents(el); r.setEnd(sel.getRangeAt(0).startContainer, sel.getRangeAt(0).startOffset);
-  const tmp = document.createElement('div'); tmp.style.whiteSpace = 'pre-wrap'; tmp.appendChild(r.cloneContents()); document.body.appendChild(tmp); const before = tmp.innerText; tmp.remove();
-  return { before, after: full.slice(before.length) };
+/* ---------- colores dentro de un cuadro de texto ----------
+   i.s = el texto plano (como siempre); i.r = tramos de otro color [[desde, hasta, color], …] con los colores del lápiz.
+   Lo que no está en un tramo lleva el color del cuadro (i.c, o negro). Seleccionar texto + elegir color = ese trozo cambia;
+   sin seleccionar, lo que escribas a partir de ahí sale en el color elegido. */
+let txSnap = null, txPen = null; // última selección dentro del cuadro que se escribe · color pendiente para lo próximo que se teclee
+function txHtml(i) {
+  const s = String(i.s ?? '') + (String(i.s ?? '').endsWith('\n') ? '\n' : ''); if (!i.r?.length) return esc(s);
+  let out = '', p = 0;
+  for (const [a, b, c] of i.r) { if (a < p || a >= s.length) continue; if (a > p) out += esc(s.slice(p, a)); out += `<span data-c="${esc(c)}" style="color:${penCss(c)}">${esc(s.slice(a, b))}</span>`; p = Math.min(b, s.length); }
+  return out + esc(s.slice(p));
 }
-function setPlain(el, text, caret) {
-  el.textContent = text + (text.endsWith('\n') ? '\n' : '');
-  const tn = el.firstChild, sel = getSelection(), r = document.createRange();
-  if (tn) { r.setStart(tn, Math.min(caret, tn.length)); r.collapse(true); sel.removeAllRanges(); sel.addRange(r); }
-  el.dispatchEvent(new Event('input', { bubbles: true }));
+const rgbHex = v => { const m = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(v || ''); return m ? '#' + [m[1], m[2], m[3]].map(n => (+n).toString(16).padStart(2, '0')).join('').toUpperCase() : String(v || '').toUpperCase(); };
+function nodeColor(n, el) {
+  for (let e = n.parentElement; e && e !== el; e = e.parentElement) {
+    if (e.dataset?.c) return e.dataset.c;
+    if (e.style?.color) { if (e.style.color.includes('--ink')) return 'ink'; const h = rgbHex(e.style.color); if (PENS.includes(h)) return h; }
+  }
+  return null;
+}
+function txWalk(el) {
+  const segs = []; let s = '';
+  const walk = p => { for (const n of p.childNodes) {
+    if (n.nodeType === 3) { segs.push({ n, a: s.length, c: nodeColor(n, el) }); s += n.data; }
+    else if (n.nodeName === 'BR') s += '\n';
+    else if (n.nodeType === 1) { if (/^(DIV|P)$/.test(n.nodeName) && s && !s.endsWith('\n')) s += '\n'; walk(n); }
+  } };
+  walk(el); return { s, segs };
+}
+function txRead(el) {
+  const { s: raw, segs } = txWalk(el), s = raw.replace(/\n$/, ''), r = [];
+  for (const g of segs) { const b = Math.min(g.a + g.n.data.length, s.length); if (g.c && b > g.a) { const l = r[r.length - 1]; if (l && l[2] === g.c && l[1] === g.a) l[1] = b; else r.push([g.a, b, g.c]); } }
+  return { s, r };
+}
+function txOffset(el, node, off) {
+  if (node.nodeType === 3) { const g = txWalk(el).segs.find(g => g.n === node); return g ? g.a + Math.min(off, node.data.length) : 0; }
+  const r = document.createRange(); r.setStart(el, 0); r.setEnd(node, off); const d = document.createElement('div'); d.appendChild(r.cloneContents()); return txWalk(d).s.length;
+}
+function txSelOffsets(el) {
+  const sel = getSelection(); if (!sel.rangeCount) return null; const r = sel.getRangeAt(0); if (!el.contains(r.startContainer) || !el.contains(r.endContainer)) return null;
+  const n = txRead(el).s.length, a = Math.min(n, txOffset(el, r.startContainer, r.startOffset)), b = Math.min(n, txOffset(el, r.endContainer, r.endOffset));
+  return { a: Math.min(a, b), b: Math.max(a, b) };
+}
+function txPoint(el, o) { for (const g of txWalk(el).segs) if (o >= g.a && o <= g.a + g.n.data.length) return [g.n, o - g.a]; return [el, el.childNodes.length]; }
+function txSelect(el, a, b = a) { const r = document.createRange(); r.setStart(...txPoint(el, a)); r.setEnd(...txPoint(el, b)); const s = getSelection(); s.removeAllRanges(); s.addRange(r); }
+function runsNorm(r) { const out = []; for (const x of r.filter(x => x[1] > x[0] && x[2]).sort((x, y) => x[0] - y[0])) { const l = out[out.length - 1]; if (l && l[2] === x[2] && l[1] >= x[0]) l[1] = Math.max(l[1], x[1]); else out.push([...x]); } return out; }
+// pone el color c (null = el del cuadro) en [a, b)
+function runsSet(r, a, b, c) { const out = []; for (const [x, y, k] of r || []) { if (x < a) out.push([x, Math.min(y, a), k]); if (y > b) out.push([Math.max(x, b), y, k]); } if (c && b > a) out.push([a, b, c]); return runsNorm(out); }
+// quita del caracteres en at e inserta ins; lo insertado lleva el color c (undefined = el de la letra de la izquierda, null = el del cuadro)
+function runsEdit(r, at, del, ins, c) {
+  const e = at + del, d = ins - del, out = []; let left = null;
+  for (const [x, y, k] of r || []) { if (x < at) { out.push([x, Math.min(y, at), k]); if (y >= at) left = k; } if (y > e) out.push([Math.max(x, e) + d, y + d, k]); }
+  const col = c === undefined ? left : c; if (col && ins) out.push([at, at + ins, col]);
+  return runsNorm(out);
+}
+function txWrite(el, it, a, b = a) { el.innerHTML = txHtml(it); txSelect(el, a, b); el.dispatchEvent(new Event('input', { bubbles: true })); }
+// Elegir un color mientras se escribe en un cuadro: lo seleccionado cambia de color; sin selección, lo siguiente que escribas
+function txColor(c) {
+  const el = document.activeElement; if (!el?.classList?.contains('tx') || !el.classList.contains('editing') || !txSnap || txSnap.id !== el.dataset.id) return false;
+  const it = items().find(i => i.id === el.dataset.id); if (!it) return false;
+  const k = c === (it.c || 'ink') ? null : c, { a, b } = txSnap;
+  if (a === b) { txPen = { id: it.id, c: k }; txSelect(el, a); return true; }
+  snap(); const v = txRead(el); it.s = v.s; it.r = runsSet(v.r, a, b, k); if (!it.r.length) delete it.r; txWrite(el, it, a, b); return true;
+}
+// Texto dentro de un cuadro: saltos de línea reales; los colores de cada trozo se mantienen
+function splitAtCaret(el) { const v = txRead(el), o = txSelOffsets(el), a = o ? o.a : v.s.length, b = o ? o.b : a; return { before: v.s.slice(0, a), after: v.s.slice(b) }; }
+function setPlain(el, text, caret, c) {
+  const it = items().find(i => i.id === el.dataset.id); if (!it) return;
+  const v = txRead(el), n = Math.min(v.s.length, text.length); let p = 0, q = 0;
+  while (p < n && v.s[p] === text[p]) p++;
+  while (q < n - p && v.s[v.s.length - 1 - q] === text[text.length - 1 - q]) q++;
+  const r = runsEdit(v.r, p, v.s.length - p - q, text.length - p - q, c);
+  it.s = text; if (r.length) it.r = r; else delete it.r;
+  txWrite(el, it, caret);
 }
 function editAt(el, e) {
   edit(el);
@@ -1084,7 +1144,7 @@ function selectLineAt(e) {
 // cambiar el color de lo seleccionado (trazos y cuadros de texto) al elegir otro color de lápiz
 function recolorSel(c) {
   const list = selItems().filter(i => i.t === 's' || i.t === 'x'); if (!list.length) return;
-  snap(); list.forEach(i => { i.c = c; }); renderItems(); markSel(); dirty();
+  snap(); list.forEach(i => { i.c = c; delete i.r; }); renderItems(); markSel(); dirty();
 }
 
 function tapAt(e) { const w = toW(e); if (e.pointerType === 'touch') { addText(w); return; } if (isDouble(e, 'bg')) addText(w); else showCaret(w); }
@@ -1495,9 +1555,19 @@ export async function mount(el, opts = {}) {
   $('#ntPager').addEventListener('click', e => { const b = e.target.closest('[data-pg]'); if (!b || !pager) return; if (b.dataset.pg === 'x') pagerOff(); else pagerGo(pager.k + +b.dataset.pg); });
   stage.addEventListener('click', e => { const o = e.target.closest('[data-fopen]'), d = e.target.closest('[data-fdrive]'), x = e.target.closest('[data-fembed]'); if (o || d || x) { const it = items().find(i => i.id === e.target.closest('.it').dataset.id); if (it) x ? embedFileItem(it) : openFile(it.f, !!d); } });
 
-  itemsEl.addEventListener('input', e => { const el = e.target.closest('.tx'); if (!el) return; const it = items().find(i => i.id === el.dataset.id); if (it) { it.s = el.innerText.replace(/\n$/, ''); markLast(it.id); autoTitle(); dirty(); keepCaret(); } });
+  itemsEl.addEventListener('input', e => { const el = e.target.closest('.tx'); if (!el) return; const it = items().find(i => i.id === el.dataset.id); if (it) { if (el.querySelector('span')) { const v = txRead(el); it.s = v.s; if (v.r.length) it.r = v.r; else delete it.r; } else { it.s = el.innerText.replace(/\n$/, ''); delete it.r; } markLast(it.id); autoTitle(); dirty(); keepCaret(); } });
   window.visualViewport?.addEventListener('resize', () => { if (editing()) keepCaret(); }); // al abrirse el teclado
-  itemsEl.addEventListener('focusout', e => { const el = e.target.closest('.tx'); if (!el) return; el.contentEditable = 'false'; el.classList.remove('editing'); const it = items().find(i => i.id === el.dataset.id); if (it && !it.s.trim()) { cur.doc.tabs[cur.tab] = items().filter(i => i !== it); hist.pop(); renderItems(); dirty(); } });
+  itemsEl.addEventListener('focusout', e => { const el = e.target.closest('.tx'); if (!el) return; txSnap = txPen = null; el.contentEditable = 'false'; el.classList.remove('editing'); const it = items().find(i => i.id === el.dataset.id); if (it && !it.s.trim()) { cur.doc.tabs[cur.tab] = items().filter(i => i !== it); hist.pop(); renderItems(); dirty(); } });
+  // color elegido sin seleccionar nada: lo próximo que teclees sale en ese color
+  itemsEl.addEventListener('beforeinput', e => {
+    const el = e.target.closest?.('.tx.editing'); if (!el || !txPen || txPen.id !== el.dataset.id || e.inputType !== 'insertText' || !e.data) return;
+    const o = txSelOffsets(el); if (!o) return;
+    e.preventDefault(); const c = txPen.c; txPen = null; const v = txRead(el);
+    setPlain(el, v.s.slice(0, o.a) + e.data + v.s.slice(o.b), o.a + e.data.length, c);
+  });
+  document.addEventListener('selectionchange', () => { const el = document.activeElement; if (!el?.classList?.contains('tx') || !el.classList.contains('editing')) return; const o = txSelOffsets(el); if (o) { if (txPen && txSnap && (o.a !== txSnap.a || o.b !== txSnap.b)) txPen = null; txSnap = { id: el.dataset.id, ...o }; } });
+  // tocar el círculo de color o la paleta no quita el cursor ni la selección del cuadro de texto
+  ['#ntColor', '#ntPenPop'].forEach(q => $(q).addEventListener('mousedown', e => { if (editing()) e.preventDefault(); }));
   itemsEl.addEventListener('keydown', e => {
     const el = e.target.closest('.tx.editing'); if (!el || e.key !== 'Enter' || e.isComposing) return;
     e.preventDefault();
@@ -1507,11 +1577,11 @@ export async function mount(el, opts = {}) {
     if (/^\s*•\s*$/.test(line)) { const b = before.slice(0, before.length - line.length); return setPlain(el, b + after, b.length); } // viñeta vacía: salir de la lista
     setPlain(el, before + '\n• ' + after, before.length + 3);
   });
-  itemsEl.addEventListener('paste', e => { const el = e.target.closest('.tx'); if (!el) return; const t = e.clipboardData.getData('text/plain'); if (t) { e.preventDefault(); const { before, after } = splitAtCaret(el); setPlain(el, before + t + after, before.length + t.length); } });
+  itemsEl.addEventListener('paste', e => { const el = e.target.closest('.tx'); if (!el) return; const t = e.clipboardData.getData('text/plain'); if (t) { e.preventDefault(); const { before, after } = splitAtCaret(el), pc = txPen?.id === el.dataset.id ? txPen.c : undefined; txPen = null; setPlain(el, before + t + after, before.length + t.length, pc); } });
 
   $('#ntPenPop').addEventListener('click', e => {
     const b = e.target.closest('button'); if (!b) return;
-    if (b.dataset.pc) { pen = b.dataset.pc; L.set('pen', pen); $('#ntPenPop').hidden = true; recolorSel(pen); }
+    if (b.dataset.pc) { pen = b.dataset.pc; L.set('pen', pen); $('#ntPenPop').hidden = true; if (!txColor(pen)) recolorSel(pen); }
     if (b.dataset.ps) { const k = $('#ntPenPop').dataset.for; if (k === 'brush' || k === 'pencil' || k === 'mark') kind = k; sizes[kind] = +b.dataset.ps; L.set('sizes', sizes); L.set('kind', kind); lasso = false; $('#ntPenPop').hidden = true; }
     eraser = false; syncTools();
   });
