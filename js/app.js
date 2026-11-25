@@ -1,7 +1,7 @@
 // PABE OS — carcasa: carril de módulos, botón +, estado de Drive
 import { drive } from './drive.js';
 import { CONFIG } from './config.js';
-import { on, sync, syncNow, startSync } from './store.js';
+import { on, sync, syncNow, startSync, kv } from './store.js';
 import { supa, realtime } from './supa.js';
 import * as notas from './modules/notas.js';
 import * as finanzas from './modules/finanzas.js';
@@ -32,19 +32,23 @@ let current = null;
 // Rutas con dirección propia (#módulo/subruta): así cualquier botón se puede abrir en otra pestaña
 // (clic derecho → «Abrir en pestaña nueva», Ctrl/⌘+clic o clic con la rueda). Ej.: #notas/nueva, #notas/<id>, #calendario/semana, #finanzas/ctas
 const PLUS = { calendario: ['#calendario/nuevo', 'Evento nuevo'], dia: ['#dia/nuevo', 'Compromiso nuevo'] };
+// Módulos ya montados. Si se pulsa uno antes de que termine de montarse, se muestra en cuanto esté (sin esperar al resto).
+const mounted = new Set(); let pending = null;
 function go(m, keep, sub) {
   if (!MODS[m]) m = 'notas';
-  if (current && current !== m) MODS[current].mod?.leave?.();
+  if (current && current !== m && mounted.has(current)) MODS[current].mod?.leave?.();
   const entering = current !== m; current = m;
   document.querySelectorAll('.mod').forEach(b => b.classList.toggle('on', b.dataset.m === m));
   document.querySelectorAll('.view').forEach(v => { v.hidden = v.dataset.view !== (MODS[m].mod ? m : 'soon'); });
   if (!MODS[m].mod) paintModulo(MODS[m]);
   const [href, label] = PLUS[m] || ['#notas/nueva', 'Nota nueva']; const pl = $('#plus'); pl.href = href; pl.title = label; pl.setAttribute('aria-label', label);
-  if (entering && !keep && !(m === 'notas' && sub && sub !== 'todas')) MODS[m].mod?.enter?.();
-  if (sub) MODS[m].mod?.route?.(sub);
+  const run = () => { if (entering && !keep && !(m === 'notas' && sub && sub !== 'todas')) MODS[m].mod?.enter?.(); if (sub) MODS[m].mod?.route?.(sub); };
+  if (MODS[m].mod && !mounted.has(m)) pending = { m, run: pending?.m === m ? (() => { const a = pending.run; return () => { a(); run(); }; })() : run };
+  else { pending = null; run(); }
   const h = location.hash.slice(1), base = h.split('/')[0];
   if (base !== m || (sub && ['nueva', 'nuevo'].includes(sub))) history.replaceState(null, '', '#' + m + (sub && !['nueva', 'nuevo', 'todas'].includes(sub) ? '/' + sub : ''));
 }
+function markMounted(id) { mounted.add(id); if (pending?.m === id) { const r = pending.run; pending = null; r(); } }
 const fromHash = () => { const [m, ...r] = location.hash.slice(1).split('/'); go(m || 'notas', false, r.join('/') || null); };
 
 /* ---------- estado de la sincronía (punto + botón) ---------- */
@@ -86,29 +90,38 @@ async function boot() {
   if (login?.error) toast('No se pudo iniciar sesión: ' + login.error);
   else if (login?.google) drive.use(login.google, login.expires_in, CONFIG.scope);
   if (await switchUser()) return;
-  if (supa.signedIn) await Promise.race([space.load(), new Promise(ok => setTimeout(ok, 4000))]);
+  // el permiso de Google (Drive + Calendar) se pide ya, en segundo plano: así el calendario no espera a nadie
+  if (supa.signedIn) drive.load().catch(() => {});
   $('#rail').addEventListener('click', e => { const b = e.target.closest('.mod'); if (!b || !plainClick(e)) return; e.preventDefault(); go(b.dataset.m); });
   // «+»: en Calendario crea un evento; en el resto, una nota nueva (clic derecho → abrirlo en otra pestaña)
-  $('#plus').onclick = e => { if (!plainClick(e)) return; e.preventDefault(); if (current === 'calendario') return calendario.newEvent(); if (current === 'dia') return dia.newItem(); if (current !== 'notas') go('notas'); else notas.enter(); };
+  $('#plus').onclick = e => { if (!plainClick(e)) return; e.preventDefault(); if (current && MODS[current].mod && !mounted.has(current)) return; if (current === 'calendario') return calendario.newEvent(); if (current === 'dia') return dia.newItem(); if (current !== 'notas') go('notas'); else notas.enter(); };
   addEventListener('hashchange', fromHash);
   // ⟳ bajo el «+»: guarda lo que haya pendiente, busca la última versión de PABE y recarga esta pestaña (se queda en el mismo sitio)
   $('#reload').onclick = async () => {
     const b = $('#reload'); b.classList.add('spin');
-    try { MODS[current]?.mod?.leave?.(); } catch (_) {}
+    try { if (mounted.has(current)) MODS[current]?.mod?.leave?.(); } catch (_) {}
     try { syncNow(); } catch (_) {}
     try { const r = await navigator.serviceWorker?.getRegistration(); await Promise.race([r?.update(), new Promise(ok => setTimeout(ok, 1500))]); } catch (_) {}
     setTimeout(() => location.reload(), 300);
   };
+  // quién eres y qué compartes: con la copia guardada se arranca al momento y se comprueba con la nube en segundo plano
+  if (supa.signedIn) {
+    let c = null; try { c = await kv.get('space'); } catch (_) {}
+    if (c && c.uid && c.uid === supa.user?.id) { Object.assign(space, { me: c.me, uid: c.uid, mine: c.mine || [], members: c.members || [], loaded: true }); space.load().catch(() => {}); }
+    else await Promise.race([space.load(), new Promise(ok => setTimeout(ok, 4000))]);
+  }
   notas.setActiveCheck(() => current === 'notas');
-  await notas.mount(document.querySelector('[data-view=notas]'));
-  await finanzas.mount(document.querySelector('[data-view=finanzas]'));
-  await calendario.mount(document.querySelector('[data-view=calendario]'));
-  await dia.mount(document.querySelector('[data-view=dia]'));
+  fromHash(); // se muestra ya el módulo pedido; se monta primero ese, luego el Calendario y el resto
+  const MOUNT = { calendario, notas, dia, finanzas };
+  const first = Object.keys(MOUNT).includes(current) ? current : null;
+  for (const id of [first, 'calendario', 'notas', 'dia', 'finanzas'].filter((x, i, a) => x && a.indexOf(x) === i)) {
+    try { await MOUNT[id].mount(document.querySelector(`[data-view=${id}]`)); } catch (e) { console.error(e); }
+    markMounted(id);
+  }
   agente.register('finanzas', finanzas.agentDef);
   agente.register('calendario', calendario.agentDef);
   agente.register('dia', dia.agentDef);
   agente.register('notas', notas.agentDef); agente.setCurrent(() => current || 'notas'); mountAgent();
-  fromHash();
 
   on('sync', paintSync); supa.onAuth(paintSync);
   drive.onAuth(ok => { paintSync(); if (ok) pullSettings(); });
