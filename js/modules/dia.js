@@ -117,16 +117,61 @@ function seedOT() {
     mes: { per: ['Spend Fridays with her', 'Play 1 full song with the cajón', 'Invite Amaya out, the 3 of us'], neg: ['Hiring scaling business expert', 'Hiring AI automation expert', 'Design first digital product'] },
     sem: [{ per: ['Go out with Amaya', 'Spend Friday with Berna', 'Play cajón 3 days'], neg: ['Hiring AI expert', 'Design 1st digital product draft', ''] }, { per: blank(3), neg: blank(3) }, { per: blank(3), neg: blank(3) }, { per: blank(3), neg: blank(3) }],
     historial: [], created: Date.now() }, {});
-  if (!col.index.get(OT.gps)) col.put({ id: OT.gps, kind: 'ot', tipo: 'gps', titulo: 'GPS 2026 · I&S Homes', quien: 'Berna & Patrick',
+  if (!col.index.get(OT.gps)) col.put({ id: OT.gps, kind: 'ot', tipo: 'gps', anio: 2026, titulo: 'GPS 2026 · I&S Homes', quien: 'Berna & Patrick',
     goal: 'Reach €200k in revenue in 2026 to stay on the right path toward building financial and geographic freedom.',
     p: [
       { t: 'Secure 13 new projects during the remaining 7 months of 2026, with an average project value of €12k.', s: ['Clearly define our core offer.', 'Automate a funnel for new leads coming from social media and the internet by hiring the right professionals to build and manage it.', 'Weekly newsletters: Berna every Tuesday, Patrick every Thursday.', 'Lead generation every morning from 6:30 to 7:30 AM.', 'Build partnerships with agents in the sector who work with American clients looking to relocate to this area.'] },
       { t: 'Organize and systematize 80% of the business operations before Q3 so we can focus on the 20% that generates 80% of the results.', s: ['Document all processes and stages from project intake to final delivery.', 'Delegate plan drawings and renderings.', 'Implement a structured weekly update system with my team and clients.', 'Systematize and delegate administration, lead tracking, and the development of budgets and fee proposals.', 'Delegate and standardize supplier coordination and coordination of trades.'] },
       { t: 'Accumulate and reinvest €30k–€50k to execute our first investment before Q4 2026.', s: ['Weekly cash flow review with Patrick.', 'Collect more aggressive upfront payments (deposits).', 'Increase the average project value to €12k and establish a minimum project fee of €6k.', 'Set aside a fixed monthly percentage for an investment fund.', 'Study and analyze property flipping opportunities, including office flipping opportunities.'] },
     ], historial: [], created: Date.now() }, {});
+  // fijar el mes del 4-1-1 y el año del GPS que ya existían (para que no cambien al editarlos)
+  const o4 = col.index.get(OT['411']); if (o4 && !o4.periodo) { o4.periodo = p411(o4); save(o4); }
+  const og = col.index.get(OT.gps); if (og && !og.anio) { og.anio = GPS_BASE; save(og); }
   if (!col.index.get(OT.someday)) col.put({ id: OT.someday, kind: 'ot', tipo: 'someday', titulo: 'Someday Letter', fecha: '', texto: '', historial: [], created: Date.now() }, {});
 }
-const ot = t => col.index.get(OT[t]);
+// GPS: uno por año. El de 2026 conserva su id de siempre («ot-gps»); los demás años, «ot-gps-AAAA».
+// Dentro de cada año hay una versión vigente (la hoja) y sus versiones anteriores (historial).
+const GPS_BASE = 2026;
+const gpsId = y => +y === GPS_BASE ? OT.gps : 'ot-gps-' + y;
+const gpsAnio = o => +o.anio || GPS_BASE;
+const gpsList = () => col.list().filter(r => r.kind === 'ot' && r.tipo === 'gps').sort((a, b) => gpsAnio(a) - gpsAnio(b));
+const gpsAnios = () => gpsList().map(gpsAnio);
+const gpsDe = y => col.index.get(gpsId(y));
+let gpsYear = null; // año elegido en las subpestañas; por defecto el año en curso si existe, si no el más reciente
+const gpsSel = () => { const ys = gpsAnios(); if (gpsYear != null && ys.includes(gpsYear)) return gpsYear; const y = new Date().getFullYear(); return ys.includes(y) ? y : (ys[ys.length - 1] ?? GPS_BASE); };
+function crearGPS(y) {
+  y = +y; if (!(y >= 2000 && y <= 2100)) return null;
+  const ya = gpsDe(y); if (ya && !ya.deleted) return ya;
+  const prev = gpsList().filter(o => gpsAnio(o) < y).pop() || gpsList()[0];
+  const o = { id: gpsId(y), kind: 'ot', tipo: 'gps', anio: y, titulo: 'GPS ' + y + (prev?.titulo?.includes('·') ? ' · ' + prev.titulo.split('·').slice(1).join('·').trim() : ''), quien: prev?.quien || '',
+    goal: '', p: [0, 1, 2].map(() => ({ t: '', s: blank(5) })), historial: [], created: Date.now() };
+  col.put(o, {}); return o;
+}
+// 4-1-1: uno por mes («periodo» AAAA-MM). El que ya existía conserva su id («ot-411»); los demás, «ot-411-AAAA-MM».
+const mkey = (d = new Date()) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+const p411 = o => o.periodo || (o.actualizado || '2026-03').slice(0, 7);
+const l411 = () => col.list().filter(r => r.kind === 'ot' && r.tipo === '411').sort((a, b) => p411(a) < p411(b) ? -1 : 1);
+const de411 = k => l411().find(o => p411(o) === k);
+const fmtMes = k => { const [y, m] = k.split('-').map(Number); const s = new Intl.DateTimeFormat('es-ES', { month: 'long', year: 'numeric' }).format(new Date(y, m - 1, 1)); return s[0].toUpperCase() + s.slice(1); };
+const fmtMesC = k => { const [y, m] = k.split('-').map(Number); return new Intl.DateTimeFormat('es-ES', { month: 'short' }).format(new Date(y, m - 1, 1)).replace('.', '') + ' ' + y; };
+const sigMes = k => { const [y, m] = k.split('-').map(Number); return mkey(new Date(y, m, 1)); };
+let mes411 = null;
+const sel411 = () => { const ks = l411().map(p411); if (mes411 && ks.includes(mes411)) return mes411; const k = mkey(); return ks.includes(k) ? k : (ks[ks.length - 1] ?? k); };
+function crear411(k) {
+  if (!/^\d{4}-\d{2}$/.test(k || '')) return null; const ya = de411(k); if (ya) return ya;
+  // los objetivos anuales y los valores pasan del mes anterior; los del mes y las semanas empiezan en blanco
+  const prev = l411().filter(o => p411(o) < k).pop() || l411()[0];
+  const o = { id: 'ot-411-' + k, kind: 'ot', tipo: '411', periodo: k, titulo: '4-1-1 · ' + fmtMes(k), actualizado: dkey(), core: prev?.core || '',
+    anual: clone(prev?.anual || { per: blank(3), neg: blank(3) }), mes: { per: blank(3), neg: blank(3) }, sem: [0, 1, 2, 3].map(() => ({ per: blank(3), neg: blank(3) })), historial: [], created: Date.now() };
+  col.put(o, {}); return o;
+}
+function renderMeses() {
+  const sel = sel411(), ks = l411().map(p411), last = ks[ks.length - 1], now = mkey();
+  const nuevo = !ks.includes(now) && (!last || now > last) ? now : sigMes(last || now);
+  return `<nav class="ot-years" aria-label="4-1-1 por mes">${ks.map(k => `<a class="ot-year${k === sel ? ' on' : ''}" href="#dia/onething/411/${k}" data-m411="${k}">${esc(fmtMesC(k))}</a>`).join('')}
+    <button class="ot-year ot-yadd" data-m411new="${nuevo}" title="Crear el 4-1-1 de ${esc(fmtMes(nuevo))}">+ ${esc(fmtMesC(nuevo))}</button></nav>`;
+}
+const ot = t => t === 'gps' ? gpsDe(gpsSel()) : t === '411' ? de411(sel411()) : col.index.get(OT[t]);
 // campos por ruta: «anual.per.0», «sem.2.neg.1», «p.0.s.3», «goal», «texto»…
 const getP = (o, path) => path.split('.').reduce((a, k) => a == null ? a : a[k], o);
 function setP(o, path, v) { const ks = path.split('.'); let a = o; ks.slice(0, -1).forEach((k, i) => { if (a[k] == null) a[k] = /^\d+$/.test(ks[i + 1]) ? [] : {}; a = a[k]; }); a[ks[ks.length - 1]] = v; }
@@ -162,12 +207,12 @@ function renderHoy() {
 
 /* ---------- One Thing ---------- */
 function field(o, path, size, color, ph = 'Toca para escribir') {
-  return `<div class="ot-f" data-edit="${esc(path)}" tabindex="0" role="button">${hand(getP(o, path) || '', size, { color, ph })}</div>`;
+  return `<div class="ot-f" data-edit="${esc(path)}"${color && color !== INK.base ? ` data-ink="${color}"` : ''} tabindex="0" role="button">${hand(getP(o, path) || '', size, { color, ph })}</div>`;
 }
 function render411(o, ro) {
   const col2 = (base, n, s) => ['per', 'neg'].map(k => `<div class="ot-col"><div class="ot-colh">${k === 'per' ? 'Personal' : 'Negocio'}</div><ol>${Array.from({ length: Math.max(n, (getP(o, base + '.' + k) || []).length) }, (_, i) => `<li>${field(o, `${base}.${k}.${i}`, s, INK[k])}</li>`).join('')}</ol></div>`).join('');
   return `<section class="ot-sheet ot-411">
-    <header class="ot-head"><div><div class="ot-kick">The ONE Thing · Ejercicio 4</div><h2>${esc(o.titulo || '4-1-1')}</h2></div><div class="ot-meta"><span>Actualizado: <b>${esc(fmtFecha(o.actualizado) || '—')}</b></span>${ro ? '' : '<button class="ghost" data-otact="nueva">Guardar versión y actualizar</button>'}</div></header>
+    <header class="ot-head"><div><div class="ot-kick">The ONE Thing · 4-1-1 de ${esc(fmtMes(p411(o)))}${ro ? '' : ' · <span class="ot-vig">Vigente</span>'}</div><h2>${esc('4-1-1 · ' + fmtMes(p411(o)))}</h2></div><div class="ot-meta"><span>Actualizado: <b>${esc(fmtFecha(o.actualizado) || '—')}</b></span>${ro ? '' : '<button class="ghost" data-otact="nueva">Guardar versión y actualizar</button>'}</div></header>
     <div class="ot-vals"><span>Valores:</span>${field(o, 'core', 12, INK.base, 'Tus 3 valores (toca para escribir)')}</div>
     <h3 class="ot-bar">Objetivos anuales</h3><div class="ot-grid">${col2('anual', 3, 13)}</div>
     <h3 class="ot-bar">Objetivos del mes</h3><div class="ot-grid">${col2('mes', 3, 13)}</div>
@@ -175,9 +220,14 @@ function render411(o, ro) {
     <div class="ot-weeks">${(o.sem || []).map((w, i) => `<div class="ot-week"><div class="ot-wh">Semana ${i + 1}</div>${['per', 'neg'].map(k => `<div class="ot-colh">${k === 'per' ? 'Personal' : 'Negocio'}</div><ol>${[0, 1, 2].map(j => `<li>${field(o, `sem.${i}.${k}.${j}`, 11, INK[k], '—')}</li>`).join('')}</ol>`).join('')}</div>`).join('')}</div>
   </section>`;
 }
-function renderGPS(o) {
+function renderGPSYears() {
+  const sel = gpsSel(), ys = gpsAnios(), sig = Math.max(new Date().getFullYear(), ...ys) + (ys.includes(new Date().getFullYear()) ? 1 : 0);
+  return `<nav class="ot-years" aria-label="GPS por año">${ys.map(y => `<a class="ot-year${y === sel ? ' on' : ''}" href="#dia/onething/gps/${y}" data-gpsy="${y}">${y}</a>`).join('')}
+    <button class="ot-year ot-yadd" data-gpsnew="${sig}" title="Crear el GPS de otro año">+ ${sig}</button></nav>`;
+}
+function renderGPS(o, ro) {
   return `<section class="ot-sheet ot-gps">
-    <header class="ot-head"><div><div class="ot-kick">The ONE Thing · GPS</div><h2>${esc(o.titulo || 'GPS')}</h2></div><div class="ot-meta"><span>${esc(o.quien || '')}</span><button class="ghost" data-otact="nueva">Guardar versión</button></div></header>
+    <header class="ot-head"><div><div class="ot-kick">The ONE Thing · GPS ${gpsAnio(o)}${ro ? '' : ' · <span class="ot-vig">Vigente</span>'}</div><h2>${esc(o.titulo || 'GPS')}</h2></div><div class="ot-meta"><span>${esc(o.quien || '')}</span>${ro ? '' : '<button class="ghost" data-otact="nueva">Guardar versión</button>'}</div></header>
     <div class="ot-goal"><div class="ot-colh">Goal · el ONE Thing del año</div>${field(o, 'goal', 15, INK.base)}</div>
     <div class="ot-prios">${(o.p || []).map((p, i) => `<div class="ot-prio"><div class="ot-ph">Prioridad ${i + 1}</div>${field(o, `p.${i}.t`, 12, INK.neg)}<div class="ot-colh">Estrategias</div><ol>${[0, 1, 2, 3, 4].map(j => `<li>${field(o, `p.${i}.s.${j}`, 10, INK.per, '—')}</li>`).join('')}</ol></div>`).join('')}</div>
   </section>`;
@@ -192,28 +242,38 @@ function renderSomeday(o) {
 function renderOT() {
   const el = $('#diaOT', root), o0 = ot(otTab); if (!o0) { el.innerHTML = '<p class="mut">Cargando…</p>'; return; }
   const h = verHist != null ? (o0.historial || [])[verHist] : null, o = h ? { ...o0, ...h.datos } : o0;
-  const body = otTab === '411' ? render411(o, !!h) : otTab === 'gps' ? renderGPS(o) : renderSomeday(o);
+  const body = otTab === '411' ? render411(o, !!h) : otTab === 'gps' ? renderGPS(o, !!h) : renderSomeday(o);
   const hist = (o0.historial || []).map((v, i) => `<button class="ot-vbtn${verHist === i ? ' on' : ''}" data-hist="${i}">${esc(fmtFecha(v.fecha))}</button>`).reverse().join('');
   el.innerHTML = `<nav class="ot-tabs">${[['411', '4-1-1'], ['gps', 'GPS'], ['someday', 'Someday Letter']].map(([k, n]) => `<a class="ot-tab${k === otTab ? ' on' : ''}" href="#dia/onething/${k}" data-ot="${k}">${n}</a>`).join('')}</nav>
-    ${h ? `<div class="ot-ro">Estás viendo la versión del ${esc(fmtFecha(h.fecha))} (solo lectura). <button class="ghost" data-hist="">Volver a la vigente</button></div>` : ''}
+    ${otTab === 'gps' ? renderGPSYears() : otTab === '411' ? renderMeses() : ''}
+    ${h ? `<div class="ot-ro">Estás viendo la versión del ${esc(fmtFecha(h.fecha))} (solo lectura). <button class="ghost" data-hist="">Volver a la vigente</button> <button class="ghost" data-otact="restaurar">Hacer vigente esta versión</button></div>` : ''}
     <div class="${h ? 'ot-readonly' : ''}">${body}</div>
     ${hist ? `<div class="ot-hist"><span class="mut">Versiones anteriores:</span>${hist}</div>` : ''}
     ${hasHand() ? '' : '<p class="mut ot-tip">Para verlo con tu letra, enséñasela una vez en Notas (mantén pulsado el micrófono → «Enseñar mi letra»).</p>'}`;
   paintHands(el);
 }
 // Guardar una copia de la hoja tal como está (con su fecha) y dejar la vigente lista para actualizar
-function nuevaVersion() {
+function nuevaVersion(silencio) {
   const o = ot(otTab); if (!o) return;
   const { historial, id, kind, tipo, updated, created, deleted, ...datos } = o;
   const fecha = o.actualizado || o.fecha || dkey(new Date(o.updated || Date.now()));
   o.historial = [...(o.historial || []), { fecha, datos: clone(datos) }];
-  if (o.tipo === '411') { o.actualizado = dkey(); o.titulo = '4-1-1 · ' + new Date().getFullYear(); } else if (o.tipo === 'someday') o.fecha = dkey();
-  save(o); flash('Versión del ' + fmtFecha(fecha) + ' guardada. Ya puedes actualizar la hoja.');
+  if (o.tipo === '411') { o.periodo = p411(o); o.actualizado = dkey(); } else if (o.tipo === 'someday') o.fecha = dkey();
+  save(o); if (!silencio) flash('Versión del ' + fmtFecha(fecha) + ' guardada. Ya puedes actualizar la hoja.');
+}
+
+// Recuperar una versión anterior como vigente (la vigente de ahora se guarda antes como versión: no se pierde nada)
+function restaurarVersion() {
+  const o = ot(otTab), h = verHist != null ? (o?.historial || [])[verHist] : null; if (!h) return;
+  verHist = null; nuevaVersion(true);
+  const per = o.tipo === '411' ? p411(o) : null, an = o.tipo === 'gps' ? gpsAnio(o) : null;
+  Object.assign(o, clone(h.datos)); if (an) o.anio = an; if (per) o.periodo = per;
+  save(o); flash('La versión del ' + fmtFecha(h.fecha) + ' vuelve a ser la vigente. La que había queda guardada en versiones.');
 }
 
 /* ---------- editor: tecleando, dictando o a mano ---------- */
 const HW_SYS = 'Eres un transcriptor. Transcribe exactamente el texto manuscrito de la imagen (en español, inglés o francés), de arriba abajo, respetando los saltos de línea. Corrige solo lo imprescindible para que sean palabras reales. No añadas comentarios ni comillas. Si no hay texto legible, responde con una cadena vacía.';
-function openEditor(path) {
+function openEditor(path, { mano = false, ink = '' } = {}) {
   const o = ot(otTab); if (!o || verHist != null) return;
   const box = document.getElementById('diaEd'), long = path === 'texto';
   box.innerHTML = `<div class="ed-panel"><header><b>${long ? 'Someday Letter' : 'Escribir'}</b><span class="mut">Tecleando, dictando o a mano: se guarda y se muestra con tu letra.</span></header>
@@ -224,7 +284,7 @@ function openEditor(path) {
   const tx = $('#edTx', box); setTimeout(() => { if (matchMedia('(pointer:fine)').matches) tx.focus(); }, 50);
   const close = () => { box.hidden = true; box.innerHTML = ''; };
   $('#edCancel', box).onclick = close; box.onclick = e => { if (e.target === box) close(); };
-  $('#edOk', box).onclick = () => { const o2 = ot(otTab); setP(o2, path, tx.value.trim()); if (o2.tipo === '411' && !o2.actualizado) o2.actualizado = dkey(); if (o2.tipo === 'someday' && !o2.fecha) o2.fecha = dkey(); save(o2); close(); };
+  $('#edOk', box).onclick = async () => { if (strokes.length) { await leer(); if (strokes.length) return; } const o2 = ot(otTab); setP(o2, path, tx.value.trim()); if (o2.tipo === '411' && !o2.actualizado) o2.actualizado = dkey(); if (o2.tipo === 'someday' && !o2.fecha) o2.fecha = dkey(); save(o2); close(); };
   // lienzo para escribir a mano
   let cv, cx, strokes = [], cur = null;
   const setup = () => {
@@ -236,12 +296,13 @@ function openEditor(path) {
   const redraw = () => {
     const w = cv.width / (devicePixelRatio || 1), h = cv.height / (devicePixelRatio || 1);
     cx.fillStyle = '#fff'; cx.fillRect(0, 0, w, h); cx.strokeStyle = '#e6e6ea'; cx.lineWidth = 1; for (let y = 48; y < h; y += 48) { cx.beginPath(); cx.moveTo(8, y); cx.lineTo(w - 8, y); cx.stroke(); }
-    cx.strokeStyle = '#1a1a1a'; cx.lineCap = cx.lineJoin = 'round';
+    cx.strokeStyle = ink || '#1a1a1a'; cx.lineCap = cx.lineJoin = 'round';
     for (const s of strokes) { cx.beginPath(); s.forEach(([x, y, p], i) => { cx.lineWidth = 1.6 + 2.2 * p; i ? cx.lineTo(x, y) : cx.moveTo(x, y); }); if (s.length === 1) cx.lineTo(s[0][0] + .1, s[0][1]); cx.stroke(); }
   };
   $('#edHand', box).onclick = () => { const p = $('#edPad', box); p.hidden = !p.hidden; if (!p.hidden) setup(); };
   $('#edClr', box).onclick = () => { strokes = []; redraw(); };
-  $('#edRead', box).onclick = async () => {
+  $('#edRead', box).onclick = () => leer();
+  const leer = async () => {
     if (!strokes.length) return flash('Escribe algo primero');
     if (!(await agente.ensureKey())) return flash('Para leer tu letra, pon tu clave de Claude en el asistente (✦ → ⚙)');
     const b = $('#edRead', box); b.disabled = true; b.textContent = 'Leyendo…';
@@ -252,10 +313,12 @@ function openEditor(path) {
     } catch (e) { flash(String(e?.message) === 'api-429' ? 'Claude está ocupado; prueba en un momento' : 'No he podido leer la letra (¿sin conexión?)'); }
     b.disabled = false; b.textContent = 'Pasar a texto';
   };
+  // con el lápiz se abre directamente el lienzo: escribes, Guardar lo pasa a texto y lo guarda
+  if (mano) { $('#edPad', box).hidden = false; requestAnimationFrame(setup); }
 }
 
 /* ---------- arrastrar para cambiar la prioridad (pulsación larga) ---------- */
-let drag = null, press = null, justDragged = false;
+let drag = null, press = null, justDragged = false, lastPen = false;
 function dragStart() {
   const { li, y, pid } = press; const list = li.parentElement, its = [...list.querySelectorAll('.dia-it')];
   drag = { li, list, its, from: its.indexOf(li), to: its.indexOf(li), y0: y, h: li.getBoundingClientRect().height + 8, mids: its.map(x => { const r = x.getBoundingClientRect(); return r.top + r.height / 2; }) };
@@ -371,11 +434,17 @@ export async function mount(el) {
     const o = e.target.closest('[data-ot]'); if (o) { if (!plainClick(e)) return; e.preventDefault(); return route('onething/' + o.dataset.ot); }
     if (e.target.closest('[data-hist]')) { const v = e.target.closest('[data-hist]').dataset.hist; verHist = v === '' ? null : +v; return render(); }
     if (e.target.closest('[data-otact="nueva"]')) return nuevaVersion();
-    const ed = e.target.closest('[data-edit]'); if (ed) return openEditor(ed.dataset.edit);
+    if (e.target.closest('[data-otact="restaurar"]')) return restaurarVersion();
+    const gy = e.target.closest('[data-gpsy]'); if (gy) { if (!plainClick(e)) return; e.preventDefault(); return route('onething/gps/' + gy.dataset.gpsy); }
+    const m4 = e.target.closest('[data-m411]'); if (m4) { if (!plainClick(e)) return; e.preventDefault(); return route('onething/411/' + m4.dataset.m411); }
+    const m4n = e.target.closest('[data-m411new]'); if (m4n) { const o = crear411(m4n.dataset.m411new); if (o) { flash('4-1-1 de ' + fmtMes(p411(o)) + ' creado: los objetivos anuales vienen del mes anterior.'); route('onething/411/' + p411(o)); } return; }
+    const gn = e.target.closest('[data-gpsnew]'); if (gn) { const o = crearGPS(gn.dataset.gpsnew); if (o) { flash('GPS ' + gpsAnio(o) + ' creado. Toca cada campo para escribirlo.'); route('onething/gps/' + gpsAnio(o)); } return; }
+    const ed = e.target.closest('[data-edit]'); if (ed) return openEditor(ed.dataset.edit, { mano: lastPen, ink: ed.dataset.ink || '' });
     if (e.target.closest('[data-once]')) { addOnce = !addOnce; render(); return $('#diaNew', el)?.focus(); }
     const d = e.target.closest('[data-d]'); if (d) { dia = d.dataset.d === '0' ? dkey() : addDays(dia, +d.dataset.d); if (dia > dkey()) dia = dkey(); return render(); }
     const t = e.target.closest('[data-t]'); if (t && !justDragged) { const r = col.index.get(t.closest('[data-id]').dataset.id); if (r) { const v = !hecho(r, dia); marcar(r, dia, v); if (v && deHoy(dia).every(x => hecho(x, dia))) flash('Todo cumplido. Bien hecho.'); } }
   });
+  el.addEventListener('pointerdown', e => { lastPen = e.pointerType === 'pen'; }, true);
   el.addEventListener('keydown', e => { const ed = e.target.closest?.('[data-edit]'); if (ed && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openEditor(ed.dataset.edit); } });
   el.addEventListener('submit', e => { e.preventDefault(); const i = $('#diaNew', el), v = i.value.trim(); if (!v) return; crear(v, addOnce ? { frec: ['solohoy'], fdia: dia } : {}); i.value = ''; render(); $('#diaNew', el)?.focus(); });
   on('change', d => { if (d.col === 'dia') render(); });
@@ -390,14 +459,16 @@ export async function mount(el) {
   render();
 }
 export function enter() { dia = dkey(); render(); }
-// #dia/hoy · #dia/lista · #dia/onething/411 · #dia/onething/gps · #dia/onething/someday · #dia/nuevo
+// #dia/hoy · #dia/lista · #dia/onething/411[/AAAA-MM] · #dia/onething/gps[/AAAA] · #dia/onething/someday · #dia/nuevo
 export function route(sub) {
   if (sub === 'nuevo') { section = 'hoy'; render(); setTimeout(() => $('#diaNew', root)?.focus(), 50); return; }
-  const [s, t] = String(sub).split('/');
+  const [s, t, y] = String(sub).split('/');
   if (!['hoy', 'lista', 'onething'].includes(s)) return;
   section = s; if (s === 'onething' && OT[t]) { if (otTab !== t) verHist = null; otTab = t; }
+  if (s === 'onething' && t === 'gps' && y && gpsDe(+y)) { if (gpsSel() !== +y) verHist = null; gpsYear = +y; }
+  if (s === 'onething' && t === '411' && y && de411(y)) { if (sel411() !== y) verHist = null; mes411 = y; }
   render();
-  if (location.hash.startsWith('#dia')) history.replaceState(null, '', '#dia/' + (s === 'onething' ? 'onething/' + otTab : s));
+  if (location.hash.startsWith('#dia')) history.replaceState(null, '', '#dia/' + (s === 'onething' ? 'onething/' + otTab + (otTab === 'gps' ? '/' + gpsSel() : otTab === '411' ? '/' + sel411() : '') : s));
 }
 export function newItem() { route('nuevo'); }
 export function leave() {}
@@ -429,14 +500,17 @@ export const agentDef = {
         if (i.prioridad) { const ids = ordenar(items()).map(x => x.id).filter(id => id !== r.id); ids.splice(Math.max(0, i.prioridad - 1), 0, r.id); reordenar(ids); }
         return { ok: true, compromiso: desc(r) };
       } },
-    { name: 'ver_one_thing', label: 'Leyendo tu One Thing', description: 'Devuelve el 4-1-1 vigente (objetivos anuales, del mes y semanales, personal y negocio), el GPS (goal, 3 prioridades con 5 estrategias) y la Someday Letter de Patrick.',
-      input_schema: { type: 'object', properties: {} },
-      run: () => ({ '411': otPlano(ot('411') || {}), gps: otPlano(ot('gps') || {}), someday: otPlano(ot('someday') || {}) }) },
-    { name: 'cambiar_one_thing', label: 'Actualizando tu One Thing', description: 'Cambia un campo de una hoja One Thing. hoja: 411 | gps | someday. campo (ruta): 411 → «anual.per.0», «anual.neg.2», «mes.per.1», «sem.0.neg.2» (semana 1-4 = 0-3), «core» (valores); gps → «goal», «p.0.t» (prioridad 1), «p.1.s.3» (estrategia 4 de la prioridad 2); someday → «texto». Antes de cambiar mucho, propón guardar una versión.',
-      input_schema: { type: 'object', properties: { hoja: { type: 'string', enum: ['411', 'gps', 'someday'] }, campo: { type: 'string' }, texto: { type: 'string' }, guardar_version_antes: { type: 'boolean' } }, required: ['hoja', 'campo', 'texto'] },
-      run: ({ hoja, campo, texto, guardar_version_antes }) => {
-        const o = ot(hoja); if (!o) return { error: 'No existe esa hoja' };
+    { name: 'ver_one_thing', label: 'Leyendo tu One Thing', description: 'Devuelve el 4-1-1 (uno por mes; por defecto el del mes en curso) (objetivos anuales, del mes y semanales, personal y negocio), el GPS (uno por año: goal, 3 prioridades con 5 estrategias; por defecto el del año en curso) y la Someday Letter de Patrick.',
+      input_schema: { type: 'object', properties: { anio_gps: { type: 'number', description: 'Año del GPS; por defecto el del año en curso (o el elegido en pantalla)' }, mes_411: { type: 'string', description: 'AAAA-MM; por defecto el mes en curso (o el elegido en pantalla)' } } },
+      run: ({ anio_gps, mes_411 } = {}) => { const g = anio_gps ? gpsDe(anio_gps) : ot('gps'), m = mes_411 ? de411(mes_411) : ot('411'); return { '411': m ? otPlano(m) : { error: 'No hay 4-1-1 de ' + mes_411 }, meses_411: l411().map(p411), gps: g ? otPlano(g) : { error: 'No hay GPS de ' + anio_gps }, gps_anios: gpsAnios(), someday: otPlano(ot('someday') || {}) }; } },
+    { name: 'cambiar_one_thing', label: 'Actualizando tu One Thing', description: 'Cambia un campo de una hoja One Thing. hoja: 411 | gps | someday. campo (ruta): 411 → «anual.per.0», «anual.neg.2», «mes.per.1», «sem.0.neg.2» (semana 1-4 = 0-3), «core» (valores); gps → «goal», «p.0.t» (prioridad 1), «p.1.s.3» (estrategia 4 de la prioridad 2); someday → «texto». El GPS es uno por año (anio_gps) y el 4-1-1 uno por mes (mes_411, AAAA-MM); si no existe, se crea. Antes de cambiar mucho, propón guardar una versión.',
+      input_schema: { type: 'object', properties: { hoja: { type: 'string', enum: ['411', 'gps', 'someday'] }, campo: { type: 'string' }, texto: { type: 'string' }, anio_gps: { type: 'number' }, mes_411: { type: 'string' }, guardar_version_antes: { type: 'boolean' } }, required: ['hoja', 'campo', 'texto'] },
+      run: ({ hoja, campo, texto, anio_gps, mes_411, guardar_version_antes }) => {
+        const gy0 = gpsYear, m0 = mes411; if (hoja === 'gps' && anio_gps) { if (!gpsDe(anio_gps)) crearGPS(anio_gps); gpsYear = +anio_gps; }
+        if (hoja === '411' && mes_411) { if (!de411(mes_411)) crear411(mes_411); mes411 = mes_411; }
+        const o = ot(hoja); if (!o) { gpsYear = gy0; mes411 = m0; return { error: 'No existe esa hoja' }; }
         if (guardar_version_antes) { const t = otTab; otTab = hoja; nuevaVersion(); otTab = t; }
+        gpsYear = gy0; mes411 = m0;
         setP(o, campo, texto); if (hoja === '411') o.actualizado = dkey(); save(o); return { ok: true, hoja, campo, texto };
       } },
   ]
