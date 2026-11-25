@@ -110,7 +110,7 @@ function noteText(m, doc) {
 }
 // Huella de lo que se guarda de una nota: si no cambió nada desde que se abrió o se guardó, no se vuelve a guardar
 // (así abrir una nota y pasar a otra nunca pisa la versión de la nube)
-const noteSig = c => JSON.stringify([c.meta.title, c.meta.tags, c.meta.tabs, c.meta.shared, c.meta.valores, c.doc]);
+const noteSig = c => JSON.stringify([c.meta.title, c.meta.titleManual, c.meta.tags, c.meta.tabs, c.meta.shared, c.meta.valores, c.doc]);
 function saveNow() {
   clearTimeout(saveT); if (!cur) return;
   autoTitle();
