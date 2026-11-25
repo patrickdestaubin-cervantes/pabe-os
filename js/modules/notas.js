@@ -1565,7 +1565,15 @@ export async function mount(el, opts = {}) {
     e.preventDefault(); const c = txPen.c; txPen = null; const v = txRead(el);
     setPlain(el, v.s.slice(0, o.a) + e.data + v.s.slice(o.b), o.a + e.data.length, c);
   });
-  document.addEventListener('selectionchange', () => { const el = document.activeElement; if (!el?.classList?.contains('tx') || !el.classList.contains('editing')) return; const o = txSelOffsets(el); if (o) { if (txPen && txSnap && (o.a !== txSnap.a || o.b !== txSnap.b)) txPen = null; txSnap = { id: el.dataset.id, ...o }; } });
+  // letras con tilde o teclados que componen (´ + a): el color pendiente se aplica a lo compuesto al terminar
+  let txComp = null;
+  itemsEl.addEventListener('compositionstart', e => { const el = e.target.closest?.('.tx.editing'); const o = el && txPen && txPen.id === el.dataset.id ? txSelOffsets(el) : null; txComp = o ? { el, a: o.a, n: txRead(el).s.length - (o.b - o.a), c: txPen.c } : null; });
+  itemsEl.addEventListener('compositionend', () => {
+    const k = txComp; txComp = null; if (!k) return;
+    setTimeout(() => { const el = k.el, it = items().find(i => i.id === el.dataset.id); if (!it || !el.isConnected) return; const v = txRead(el), b = k.a + v.s.length - k.n, o = txSelOffsets(el); if (b <= k.a) return;
+      txPen = null; it.s = v.s; it.r = runsSet(v.r, k.a, b, k.c); if (!it.r.length) delete it.r; txWrite(el, it, o ? o.a : b, o ? o.b : b); }, 0);
+  });
+  document.addEventListener('selectionchange', () => { const el = document.activeElement; if (!el?.classList?.contains('tx') || !el.classList.contains('editing')) return; const o = txSelOffsets(el); if (o) { if (txPen && !txComp && txSnap && (o.a !== txSnap.a || o.b !== txSnap.b)) txPen = null; txSnap = { id: el.dataset.id, ...o }; } });
   // tocar el círculo de color o la paleta no quita el cursor ni la selección del cuadro de texto
   ['#ntColor', '#ntPenPop'].forEach(q => $(q).addEventListener('mousedown', e => { if (editing()) e.preventDefault(); }));
   itemsEl.addEventListener('keydown', e => {
