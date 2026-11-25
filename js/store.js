@@ -131,11 +131,13 @@ class Collection {
   async load(id) {
     const local = await this.get(id); if (local) return local;
     if (!supa.signedIn) return null;
-    try {
-      const rows = await supa.rest(`/items?col=eq.${this.name}&id=eq.${encodeURIComponent(id)}&select=doc`);
-      const d = rows?.[0]?.doc; if (!d) return null;
-      await kv.set(this.name + ':doc:' + id, d); return d;
-    } catch (e) { return null; }
+    for (let i = 0; i < 2; i++) { // un reintento si la red falla
+      try {
+        const rows = await supa.rest(`/items?col=eq.${this.name}&id=eq.${encodeURIComponent(id)}&select=doc`);
+        const d = rows?.[0]?.doc; if (!d) return null;
+        await kv.set(this.name + ':doc:' + id, d); return d;
+      } catch (e) { if (i) return null; await new Promise(r => setTimeout(r, 800)); }
+    }
   }
   async applyCfg(data) { const lc = await this.getCfg(); if ((data.updated || 0) > (lc.updated || 0) && !this.cfgDirty) { this.cfg = data; await kv.set(this.name + ':cfg', data); emit('cfg', { col: this.name }); } }
   async push() {
