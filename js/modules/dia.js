@@ -158,7 +158,7 @@ const sigMes = k => { const [y, m] = k.split('-').map(Number); return mkey(new D
 let mes411 = null;
 const sel411 = () => { const ks = l411().map(p411); if (mes411 && ks.includes(mes411)) return mes411; const k = mkey(); return ks.includes(k) ? k : (ks[ks.length - 1] ?? k); };
 function crear411(k) {
-  if (!/^\d{4}-\d{2}$/.test(k || '')) return null; const ya = de411(k); if (ya) return ya;
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(k || '')) return null; const ya = de411(k); if (ya) return ya;
   // los objetivos anuales y los valores pasan del mes anterior; los del mes y las semanas empiezan en blanco
   const prev = l411().filter(o => p411(o) < k).pop() || l411()[0];
   const o = { id: 'ot-411-' + k, kind: 'ot', tipo: '411', periodo: k, titulo: '4-1-1 · ' + fmtMes(k), actualizado: dkey(), core: prev?.core || '',
@@ -465,8 +465,8 @@ export function route(sub) {
   const [s, t, y] = String(sub).split('/');
   if (!['hoy', 'lista', 'onething'].includes(s)) return;
   section = s; if (s === 'onething' && OT[t]) { if (otTab !== t) verHist = null; otTab = t; }
-  if (s === 'onething' && t === 'gps' && y && gpsDe(+y)) { if (gpsSel() !== +y) verHist = null; gpsYear = +y; }
-  if (s === 'onething' && t === '411' && y && de411(y)) { if (sel411() !== y) verHist = null; mes411 = y; }
+  if (s === 'onething' && t === 'gps' && y && gpsDe(+y)) { if (gpsYear !== +y) verHist = null; gpsYear = +y; }
+  if (s === 'onething' && t === '411' && y && de411(y)) { if (mes411 !== y) verHist = null; mes411 = y; }
   render();
   if (location.hash.startsWith('#dia')) history.replaceState(null, '', '#dia/' + (s === 'onething' ? 'onething/' + otTab + (otTab === 'gps' ? '/' + gpsSel() : otTab === '411' ? '/' + sel411() : '') : s));
 }
@@ -506,8 +506,8 @@ export const agentDef = {
     { name: 'cambiar_one_thing', label: 'Actualizando tu One Thing', description: 'Cambia un campo de una hoja One Thing. hoja: 411 | gps | someday. campo (ruta): 411 → «anual.per.0», «anual.neg.2», «mes.per.1», «sem.0.neg.2» (semana 1-4 = 0-3), «core» (valores); gps → «goal», «p.0.t» (prioridad 1), «p.1.s.3» (estrategia 4 de la prioridad 2); someday → «texto». El GPS es uno por año (anio_gps) y el 4-1-1 uno por mes (mes_411, AAAA-MM); si no existe, se crea. Antes de cambiar mucho, propón guardar una versión.',
       input_schema: { type: 'object', properties: { hoja: { type: 'string', enum: ['411', 'gps', 'someday'] }, campo: { type: 'string' }, texto: { type: 'string' }, anio_gps: { type: 'number' }, mes_411: { type: 'string' }, guardar_version_antes: { type: 'boolean' } }, required: ['hoja', 'campo', 'texto'] },
       run: ({ hoja, campo, texto, anio_gps, mes_411, guardar_version_antes }) => {
-        const gy0 = gpsYear, m0 = mes411; if (hoja === 'gps' && anio_gps) { if (!gpsDe(anio_gps)) crearGPS(anio_gps); gpsYear = +anio_gps; }
-        if (hoja === '411' && mes_411) { if (!de411(mes_411)) crear411(mes_411); mes411 = mes_411; }
+        const gy0 = gpsYear, m0 = mes411; if (hoja === 'gps' && anio_gps) { if (!gpsDe(anio_gps) && !crearGPS(anio_gps)) return { error: 'Año de GPS no válido: ' + anio_gps }; gpsYear = +anio_gps; }
+        if (hoja === '411' && mes_411) { if (!de411(mes_411) && !crear411(mes_411)) { gpsYear = gy0; return { error: 'Mes de 4-1-1 no válido (AAAA-MM): ' + mes_411 }; } mes411 = mes_411; }
         const o = ot(hoja); if (!o) { gpsYear = gy0; mes411 = m0; return { error: 'No existe esa hoja' }; }
         if (guardar_version_antes) { const t = otTab; otTab = hoja; nuevaVersion(); otTab = t; }
         gpsYear = gy0; mes411 = m0;
