@@ -68,8 +68,10 @@ async function loadCals() {
 }
 
 // Trae de Google los eventos de [a, b) de todos los calendarios activos
+let lastFetch = 0;
 async function fetchRange(a, b) {
   if (!gcal.ready) return;
+  lastFetch = Date.now();
   loading = true; paintState();
   try {
     if (!cals.length) await loadCals();
@@ -105,8 +107,9 @@ function refresh() {
 }
 
 /* =================== escribir en Google =================== */
-function body(f) {
+function body(f, isNew) {
   const b = { summary: f.title, location: f.loc || '', description: f.desc || '' };
+  if (f.colorId || !isNew) b.colorId = f.colorId || null; // null = volver al color del calendario
   if (f.allDay) { b.start = { date: ymd(f.start), dateTime: null }; b.end = { date: ymd(Math.max(f.end, addDays(f.start, 1))), dateTime: null }; }
   else { b.start = { dateTime: new Date(f.start).toISOString(), timeZone: TZ, date: null }; b.end = { dateTime: new Date(Math.max(f.end, f.start + 15 * 6e4)).toISOString(), timeZone: TZ, date: null }; }
   return b;
@@ -118,7 +121,7 @@ async function saveEvent(f) { // f: evento normalizado (con key si existe)
   events.set(tmpKey, { ...f, key: tmpKey }); render();
   try {
     let out, calId = f.calId;
-    if (isNew) out = await gcal.insert(calId, body(f));
+    if (isNew) out = await gcal.insert(calId, body(f, true));
     else {
       if (prev && prev.calId !== f.calId) { await gcal.move(prev.calId, f.id, f.calId); }
       out = await gcal.patch(calId, f.id, body(f));
@@ -171,6 +174,7 @@ const HTML = `
  <div class="cal-tbl" id="calTbl" hidden><div class="tb-host" id="calTable"></div></div>
  <div class="pop cal-pop" id="calPop" hidden></div>
  <div class="cal-ed" id="calEd" hidden></div>
+ <div class="cal-menu" id="calMenu" role="menu" hidden></div>
 </div>`;
 
 function paintState() {
@@ -184,6 +188,7 @@ function paintState() {
 
 function render() {
   if (!root) return;
+  if (menuEv && !events.has(menuEv.key)) hideMenu();
   paintState();
   root.querySelectorAll('.cal-seg [data-v]').forEach(b => b.classList.toggle('on', b.dataset.v === view));
   const isT = view === 'tabla';
@@ -279,7 +284,9 @@ function gridHTML(days) {
     const list = layoutDay(evs.filter(e => !e.allDay && e.end - e.start < DAY && inRange(e, d, d1)).map(ev => ({ ev, s: Math.max(ev.start, d), e: Math.min(Math.max(ev.end, ev.start + 15 * 6e4), d1) })));
     const items = list.map(x => {
       const hs = (x.s - d) / 36e5, hd = (x.e - x.s) / 36e5, h = Math.max(18, hd * hpx - 2), w = 100 / x.n;
-      return `<button class="cal-tev${h < 30 ? ' tiny' : ''}" data-ev="${esc(x.ev.key)}" style="--c:${colorOf(x.ev)};top:calc(${hs} * var(--h));height:max(18px, calc(${hd} * var(--h) - 2px));left:calc(${x.col * w}% + 1px);width:calc(${w}% - 3px)"><b>${esc(x.ev.title)}</b><span>${hm(x.ev.start)} – ${hm(x.ev.end)}${x.ev.loc ? ' · ' + esc(x.ev.loc) : ''}</span></button>`;
+      // asa inferior para alargar/acortar (solo si el evento empieza y acaba este día y se puede cambiar)
+      const rz = x.ev.start >= d && x.ev.end <= d1 && writable(calOf(x.ev.calId)) && !x.ev.key.startsWith('tmp:') ? '<i class="cal-rz" aria-hidden="true"></i>' : '';
+      return `<button class="cal-tev${h < 30 ? ' tiny' : ''}" data-ev="${esc(x.ev.key)}" style="--c:${colorOf(x.ev)};top:calc(${hs} * var(--h));height:max(18px, calc(${hd} * var(--h) - 2px));left:calc(${x.col * w}% + 1px);width:calc(${w}% - 3px)"><b>${esc(x.ev.title)}</b><span>${hm(x.ev.start)} – ${hm(x.ev.end)}${x.ev.loc ? ' · ' + esc(x.ev.loc) : ''}</span>${rz}</button>`;
     }).join('');
     const nowLine = d === today ? `<div class="cal-now" style="top:calc(${now.getHours() + now.getMinutes() / 60} * var(--h))"></div>` : '';
     return `<div class="cal-col${d === today ? ' today' : ''}" data-col="${d}" style="grid-column:${di + 2}">${items}${nowLine}</div>`;
@@ -449,7 +456,7 @@ function ghost(col, startMin, durMin, label, cls = '') {
 function setupPointer(el) {
   let p = null; // { id, type, x, y, t, ev?, timer, drag, target }
   const fmtSlot = (day, min) => `${hm(day + min * 6e4)}`;
-  const cancel = () => { if (p?.timer) clearTimeout(p.timer); if (p?.drag) { dragActive = false; p.src?.classList.remove('cal-lift'); root.querySelectorAll('.cal-ghost').forEach(g => g.remove()); } p = null; };
+  const cancel = () => { if (p?.timer) clearTimeout(p.timer); if (p?.rs) { p.src?.classList.remove('cal-lift'); root.querySelectorAll('.cal-ghost').forEach(g => g.remove()); } if (p?.drag) { dragActive = false; p.src?.classList.remove('cal-lift'); root.querySelectorAll('.cal-ghost').forEach(g => g.remove()); } p = null; };
   const lift = () => {
     if (!p || p.drag) return;
     p.drag = true; dragActive = true; p.src.classList.add('cal-lift'); navigator.vibrate?.(15);
@@ -469,6 +476,11 @@ function setupPointer(el) {
     cancel();
     const evEl = e.target.closest('.cal-tev');
     p = { id: e.pointerId, type: e.pointerType, x: e.clientX, y: e.clientY, x0: e.clientX, y0: e.clientY, t: Date.now() };
+    // asa inferior: alargar o acortar el evento arrastrando (ratón, dedo o Pencil), sin esperar
+    if (e.target.closest('.cal-rz') && evEl) {
+      const ev = events.get(evEl.dataset.ev);
+      if (ev) { p.ev = ev; p.src = evEl; p.resize = true; p.colEl = evEl.closest('[data-col]'); e.preventDefault(); return; }
+    }
     if (evEl) {
       const ev = events.get(evEl.dataset.ev);
       if (ev && writable(calOf(ev.calId)) && !ev.key.startsWith('tmp:')) { p.ev = ev; p.src = evEl; if (e.pointerType !== 'mouse') p.timer = setTimeout(lift, 450); }
@@ -478,6 +490,16 @@ function setupPointer(el) {
     if (!p || e.pointerId !== p.id) return;
     p.x = e.clientX; p.y = e.clientY;
     const far = Math.hypot(p.x - p.x0, p.y - p.y0) > 8;
+    if (p.resize) {
+      e.preventDefault();
+      if (!p.rs && Math.abs(p.y - p.y0) < 4) return;
+      if (!p.rs) { p.rs = true; dragActive = true; p.src.classList.add('cal-lift'); }
+      const day = +p.colEl.dataset.col, r = p.colEl.getBoundingClientRect(), stMin = (p.ev.start - day) / 6e4;
+      let en = Math.round(((p.y - r.top) / hpx * 60) / SNAP) * SNAP; en = Math.max(stMin + SNAP, Math.min(24 * 60, en));
+      p.newEnd = day + en * 6e4;
+      ghost(p.colEl, stMin, en - stMin, `<b>${esc(p.ev.title)}</b><span>${fmtSlot(day, stMin)} – ${en >= 24 * 60 ? '24:00' : fmtSlot(day, en)}</span>`, 'mv');
+      return;
+    }
     if (p.drag) { e.preventDefault(); move(p.x, p.y); return; }
     if (far) {
       if (p.ev && p.type === 'mouse') { lift(); return; }  // con ratón, arrastrar directamente
@@ -485,21 +507,34 @@ function setupPointer(el) {
     }
   });
   // mientras se arrastra un evento, que la vista no se desplace
-  el.addEventListener('touchmove', e => { if (p?.drag) e.preventDefault(); }, { passive: false });
+  el.addEventListener('touchmove', e => { if (p?.drag || p?.resize) e.preventDefault(); }, { passive: false });
   el.addEventListener('pointercancel', e => { if (p && !p.drag) cancel(); });
   el.addEventListener('pointerup', e => {
     if (!p || e.pointerId !== p.id) return;
     const q = p; if (q.timer) clearTimeout(q.timer); p = null;
+    if (q.resize) {
+      if (!q.rs) return; // un toque en el asa sin arrastrar: abre el evento como siempre
+      swallowClick = Date.now() + 400; setTimeout(() => { dragActive = false; }, 50);
+      q.src.classList.remove('cal-lift');
+      const ev = q.ev, ne = q.newEnd;
+      if (!ne || ne === ev.end) { root.querySelectorAll('.cal-ghost').forEach(g => g.remove()); return; }
+      saveEvent({ ...ev, end: ne }).then(() => flash(`Ahora termina a las ${hm(ne)}`)).catch(() => {}).finally(() => root.querySelectorAll('.cal-ghost').forEach(g => g.remove()));
+      return;
+    }
     if (q.drag) {
       swallowClick = Date.now() + 400; setTimeout(() => { dragActive = false; }, 50);
       q.src.classList.remove('cal-lift');
       const ev = q.ev, t = q.target;
-      if (!t) { root.querySelectorAll('.cal-ghost').forEach(g => g.remove()); return; }
+      // mantener pulsado y soltar sin mover → menú del evento (como el clic derecho)
+      if (!t || Math.hypot(q.x - q.x0, q.y - q.y0) < 10) { root.querySelectorAll('.cal-ghost').forEach(g => g.remove()); if (Math.hypot(q.x - q.x0, q.y - q.y0) < 10) openMenu(ev, q.x0, q.y0); return; }
       const ns = t.day + t.min * 6e4;
       if (ns === ev.start) { root.querySelectorAll('.cal-ghost').forEach(g => g.remove()); return; }
       confirmMove(ev, ns);
       return;
     }
+    // pulsación larga (sin mover) sobre un evento que no se puede mover → su menú
+    const held = e.target.closest('.cal-tev');
+    if (held && q.type !== 'mouse' && !pinching && Date.now() - q.t > 450) { const ev = events.get(held.dataset.ev); if (ev) { swallowClick = Date.now() + 400; openMenu(ev, q.x0, q.y0); } return; }
     // toque en un hueco vacío → evento nuevo
     if (pinching || e.target.closest('.cal-tev,.cal-mv,.cal-fit') || Date.now() - q.t > 700) return;
     const s = slotAt(e.clientX, e.clientY); if (!s) return;
@@ -544,6 +579,83 @@ function setupPinch(sc) {
   ['gesturestart', 'gesturechange'].forEach(t => sc.addEventListener(t, e => e.preventDefault()));
 }
 
+/* =================== menú del evento (clic derecho) =================== */
+// Clic derecho sobre un evento (o mantenerlo pulsado y soltar sin moverlo, en el iPad/móvil): editar, duplicar, color,
+// cambiar de calendario, eliminar… como en Google Calendar, en lugar del menú del navegador.
+const COLNAMES = { 4: 'Flamenco', 11: 'Tomate', 6: 'Mandarina', 5: 'Plátano', 2: 'Salvia', 10: 'Albahaca', 7: 'Pavo real', 9: 'Arándano', 1: 'Lavanda', 3: 'Uva', 8: 'Grafito' };
+let menuEv = null;
+function hideMenu() { const m = root && $('#calMenu', root); if (m) { m.hidden = true; m.innerHTML = ''; } menuEv = null; }
+function openMenu(ev, x, y) {
+  ev = events.get(ev.key) || ev; menuEv = ev;
+  const m = $('#calMenu', root), c = calOf(ev.calId), rw = writable(c) && !ev.key.startsWith('tmp:');
+  const otherCals = rw ? cals.filter(k => writable(k) && k.id !== ev.calId) : [];
+  const item = (a, label, extra = '') => `<button type="button" role="menuitem" data-mn="${a}" ${extra}>${label}</button>`;
+  const cuando = ev.allDay ? cap1(fDayLong.format(ev.start)) : `${cap1(fDayLong.format(ev.start))} · ${hm(ev.start)} – ${hm(ev.end)}`;
+  m.innerHTML = `<div class="cal-mh"><i style="--c:${colorOf(ev)}"></i><div><b>${esc(ev.title)}</b><span>${esc(cuando)}</span></div></div>
+   ${item('open', rw ? 'Editar' : 'Ver detalles')}
+   ${rw ? item('dup', 'Duplicar') : ''}
+   ${rw ? `<div class="cal-msep"></div><div class="cal-mcol" role="group" aria-label="Color">${Object.keys(COLNAMES).map(id => `<button type="button" data-color="${id}" title="${COLNAMES[id]}" aria-label="${COLNAMES[id]}" style="--c:${EVCOL[id]}" class="${ev.colorId === id ? 'on' : ''}"></button>`).join('')}<button type="button" data-color="" title="Color del calendario" aria-label="Color del calendario" style="--c:${c?.color || '#3e63dd'}" class="cal-mcal${!ev.colorId ? ' on' : ''}"></button></div>` : ''}
+   ${otherCals.length ? `<div class="cal-msep"></div>${otherCals.map(k => item('mv', `Pasar a ${esc(calName(k))}`, `data-cal="${esc(k.id)}"`)).join('')}` : ''}
+   ${ev.link ? `<div class="cal-msep"></div><a role="menuitem" href="${esc(ev.link)}" target="_blank" rel="noopener" data-mn="google">Abrir en Google Calendar</a>` : ''}
+   ${rw ? `<div class="cal-msep"></div>${item('del', ev.recurring ? 'Eliminar (solo este día)' : 'Eliminar', 'class="danger"')}` : ''}`;
+  m.hidden = false;
+  // que quepa en pantalla
+  const host = root.getBoundingClientRect(), w = m.offsetWidth, h = m.offsetHeight;
+  m.style.left = Math.max(8, Math.min(x, innerWidth - w - 8)) - host.left + 'px';
+  m.style.top = Math.max(8, y + h > innerHeight - 8 ? y - h : y) - host.top + 'px';
+  m.querySelector('[data-mn]')?.focus({ preventScroll: true });
+}
+async function menuAction(e) {
+  const ev = menuEv && (events.get(menuEv.key) || menuEv); if (!ev) return;
+  const col = e.target.closest('[data-color]');
+  if (col) { hideMenu(); if ((ev.colorId || '') === col.dataset.color) return; try { await saveEvent({ ...ev, colorId: col.dataset.color }); } catch (_) {} return; }
+  const b = e.target.closest('[data-mn]'); if (!b) return;
+  const a = b.dataset.mn;
+  if (a === 'google') { hideMenu(); return; }
+  if (a === 'del' && !b.classList.contains('sure')) { b.classList.add('sure'); b.textContent = '¿Eliminar? Pulsa otra vez'; return; }
+  hideMenu();
+  if (a === 'open') return openEditor(ev);
+  if (a === 'dup') { try { await saveEvent({ ...ev, key: null, id: null, recurring: false, link: '', title: ev.title + ' (copia)' }); flash('Evento duplicado'); } catch (_) {} return; }
+  if (a === 'mv') { const k = calOf(b.dataset.cal); try { await saveEvent({ ...ev, calId: b.dataset.cal }); flash('Pasado a ' + calName(k)); } catch (_) {} return; }
+  if (a === 'del') return deleteEvent(ev);
+}
+function setupMenu(el) {
+  el.addEventListener('contextmenu', e => {
+    if (e.target.closest('.cal-ed,.cal-tbl,input,textarea,select')) return; // ahí, el menú normal
+    const evEl = e.target.closest('[data-ev]');
+    if (!evEl) { if (e.target.closest('#calMenu')) e.preventDefault(); return; }
+    e.preventDefault();
+    if (dragActive) return; // la pulsación larga del dedo ya está moviendo el evento
+    const ev = events.get(evEl.dataset.ev); if (!ev) return;
+    // en táctil, en la rejilla horaria el menú sale al soltar la pulsación larga (si no se movió el evento);
+    // en los eventos de todo el día y del mes, la pulsación larga ya lo abre (ver abajo)
+    if (e.pointerType && e.pointerType !== 'mouse') return;
+    openMenu(ev, e.clientX, e.clientY);
+  });
+  // mantener pulsado un evento de todo el día o del mes (dedo o Pencil) → su menú; también en el iPad, que no lanza «contextmenu»
+  let lp = null;
+  el.addEventListener('pointerdown', e => {
+    clearTimeout(lp?.t); lp = null;
+    const chip = e.target.closest('.cal-ev[data-ev]'); if (!chip || e.pointerType === 'mouse') return;
+    const x = e.clientX, y = e.clientY;
+    lp = { x, y, t: setTimeout(() => { const ev = events.get(chip.dataset.ev); lp = null; if (ev) { swallowClick = Date.now() + 600; navigator.vibrate?.(15); openMenu(ev, x, y); } }, 500) };
+  });
+  el.addEventListener('pointermove', e => { if (lp && Math.hypot(e.clientX - lp.x, e.clientY - lp.y) > 10) { clearTimeout(lp.t); lp = null; } });
+  ['pointerup', 'pointercancel'].forEach(t => el.addEventListener(t, () => { if (lp) { clearTimeout(lp.t); lp = null; } }));
+  const m = $('#calMenu', el);
+  m.addEventListener('click', menuAction);
+  m.addEventListener('keydown', e => {
+    if (e.key === 'Escape') { e.preventDefault(); hideMenu(); return; }
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault(); const l = [...m.querySelectorAll('[data-mn],[data-color]')], i = l.indexOf(document.activeElement);
+      l[(i + (e.key === 'ArrowDown' ? 1 : -1) + l.length) % l.length]?.focus();
+    }
+  });
+  document.addEventListener('pointerdown', e => { if (menuEv && !e.target.closest('#calMenu')) hideMenu(); }, true);
+  addEventListener('resize', () => hideMenu());
+  el.addEventListener('wheel', e => { if (menuEv && !e.target.closest('#calMenu')) hideMenu(); }, { passive: true });
+}
+
 /* =================== montaje =================== */
 export async function mount(el) {
   root = el; el.innerHTML = HTML; toast = document.getElementById('toast');
@@ -569,7 +681,7 @@ export async function mount(el) {
     const ad = e.target.closest('[data-adday]'); if (ad) return openEditor(newDraft(+ad.dataset.adday, true));
     const mc = e.target.closest('[data-mday]'); if (mc) return openEditor(newDraft(+mc.dataset.mday + 10 * 36e5, false));
   });
-  setupPointer(el);
+  setupPointer(el); setupMenu(el);
   // deslizar a izquierda/derecha para cambiar de día/semana/mes (móvil y tablet)
   let sx = null, sy = null;
   el.addEventListener('touchstart', e => { if (e.target.closest('.cal-ed,.cal-tbl,.pop')) { sx = null; return; } sx = e.touches[0].clientX; sy = e.touches[0].clientY; }, { passive: true });
@@ -583,14 +695,16 @@ export async function mount(el) {
   on('change', d => { if (d?.col === 'calendario' && view === 'tabla') table.render(); });
   on('tags', () => { if (view === 'tabla') table.render(); });
   gcal.onAuth(ok => { paintState(); if (ok) refresh(); });
-  await gcal.load().catch(() => {});
-  if (gcal.ready) refresh();
+  // se pinta ya con lo guardado en el dispositivo; Google se consulta en segundo plano (sin esperar al permiso)
+  if (gcal.ready) refresh(); else gcal.load().catch(() => {});
   // al volver a la pestaña y cada minuto, traer cambios hechos desde Google Calendar
   clearInterval(refreshT); refreshT = setInterval(() => { if (gcal.ready && document.visibilityState === 'visible' && !editing) refresh(); }, 60000);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && gcal.ready) refresh(); });
   setInterval(() => { if (!editing && (view === 'dia' || view === 'semana' || view === 'laboral')) { const n = root.querySelector('.cal-now'); if (n) { const d = new Date(); n.style.top = `calc(${d.getHours() + d.getMinutes() / 60} * var(--h))`; } } }, 60000);
 }
-export function enter() { autoScroll = true; zoomed = false; render(); if (gcal.ready) refresh(); }
+// Entrar es instantáneo: se pinta con lo que ya hay y se actualiza con Google por detrás (si no se hizo hace nada)
+export function enter() { autoScroll = true; zoomed = false; render(); if (gcal.ready && Date.now() - lastFetch > 20000) refresh(); }
+export function leave() { hideMenu(); }
 // #calendario/dia|laboral|semana|mes|tabla · #calendario/nuevo (se pueden abrir en otra pestaña)
 export function route(sub) { if (sub === 'nuevo') return newEvent(); if (!['dia', 'laboral', 'semana', 'mes', 'tabla'].includes(sub)) return; setView(sub); if (location.hash.startsWith('#calendario')) history.replaceState(null, '', '#calendario/' + sub); }
 export function newEvent() { const n = new Date(); n.setMinutes(0, 0, 0); openEditor(newDraft((view === 'dia' || view === 'semana' || view === 'laboral') && cursor !== day0(Date.now()) ? cursor + 10 * 36e5 : n.getTime() + 36e5, false)); }
