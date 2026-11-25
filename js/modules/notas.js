@@ -108,15 +108,20 @@ function noteText(m, doc) {
   const hand = m.tabs.map(t => doc.hw?.[t.id]?.text).filter(Boolean).map(x => x.replace(/\s*\n\s*/g, ' · '));
   return [...hand, ...typed].join(' · ').slice(0, 3000);
 }
+// Huella de lo que se guarda de una nota: si no cambió nada desde que se abrió o se guardó, no se vuelve a guardar
+// (así abrir una nota y pasar a otra nunca pisa la versión de la nube)
+const noteSig = c => JSON.stringify([c.meta.title, c.meta.tags, c.meta.tabs, c.meta.shared, c.meta.valores, c.doc]);
 function saveNow() {
   clearTimeout(saveT); if (!cur) return;
   autoTitle();
+  if (cur.sig && noteSig(cur) === cur.sig) return;
   if (!cur.saved && isBlank()) return; if (!cur.saved) { cur.saved = true; setHash(); }
   const m = cur.meta, all = m.tabs.flatMap(t => (cur.doc.tabs[t.id] || []).map(i => ({ ...i, tab: t.id })));
   m.text = noteText(m, cur.doc);
   m.files = all.flatMap(i => [i.f, i.fx].filter(Boolean).map(f => ({ ...f, tab: i.tab, item: i.id })));
   m.ink = all.some(i => i.t === 's');
   col.put(clone(m), clone(cur.doc));
+  cur.sig = noteSig(cur);
 }
 
 
@@ -521,9 +526,14 @@ async function openNote(id, focus) {
   const m = col.index.get(id); if (!m) return;
   if (!cur || cur.meta.id !== id) {
     flushXlsx(); saveNow(); if (cur?.saved) { clearTimeout(hwT); transcribe(cur); }
-    const doc = (await col.load(id)) || { tabs: {} };
+    // Si no se ha podido traer la nota (sin conexión, sesión caducada…), no se abre vacía: se avisa y se queda como está.
+    // Abrirla vacía y guardarla pisaba la versión buena de la nube (así se vació «Semana 23 Nov»).
+    const doc = await col.load(id);
+    if (!doc || typeof doc !== 'object') { flash('No he podido traer esta nota de la nube. Revisa la conexión y vuelve a abrirla.'); return; }
+    doc.tabs = doc.tabs || {};
     m.tabs.forEach(t => { doc.tabs[t.id] = doc.tabs[t.id] || []; });
     cur = { meta: clone(m), doc: clone(doc), saved: true, tab: m.tabs[0].id };
+    cur.sig = noteSig(cur);
     hist = []; redo = []; sel = new Set(); hideMenu(); hideCaret(); resetCam();
   }
   if (focus?.tab) cur.tab = focus.tab; else if (!focus && cur.doc.last?.tab && cur.doc.tabs[cur.doc.last.tab]) cur.tab = cur.doc.last.tab;
@@ -1605,7 +1615,7 @@ export async function mount(el, opts = {}) {
   on('change', d => { if (d.col !== 'notas') return; if (pendingId && col.index.get(pendingId) && (!cur || !cur.saved)) { const id = pendingId; pendingId = null; openNote(id); } if (!$('#ntLibPanel').hidden) table.render(); });
   on('cfg', d => { if (d.col === 'notas') table.render(); });
   on('tags', () => { if (cur) renderChips(); if (!$('#ntLibPanel').hidden) table.render(); });
-  on('remote', async d => { if (d.col === 'notas' && cur && cur.meta.id === d.id && !editing() && !document.activeElement?.closest?.('.xl,.tbl') && !xlT.size) { const m = col.index.get(d.id), doc = await col.load(d.id); if (doc) { cur.meta = clone(m); cur.doc = clone(doc); m.tabs.forEach(t => { cur.doc.tabs[t.id] = cur.doc.tabs[t.id] || []; }); if (!cur.doc.tabs[cur.tab]) cur.tab = m.tabs[0].id; renderNote(); } } });
+  on('remote', async d => { if (d.col === 'notas' && cur && cur.meta.id === d.id && !editing() && !document.activeElement?.closest?.('.xl,.tbl') && !xlT.size) { const m = col.index.get(d.id), doc = await col.load(d.id); if (doc) { cur.meta = clone(m); cur.doc = clone(doc); cur.doc.tabs = cur.doc.tabs || {}; m.tabs.forEach(t => { cur.doc.tabs[t.id] = cur.doc.tabs[t.id] || []; }); if (!cur.doc.tabs[cur.tab]) cur.tab = m.tabs[0].id; cur.sig = noteSig(cur); renderNote(); } } });
   on('file', d => { const u = urlCache.get(d.localId); if (u) urlCache.set(d.id, u); });
   if (opts.lib) openLib();
 }
