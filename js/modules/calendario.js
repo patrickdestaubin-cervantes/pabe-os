@@ -627,10 +627,21 @@ function setupMenu(el) {
     e.preventDefault();
     if (dragActive) return; // la pulsación larga del dedo ya está moviendo el evento
     const ev = events.get(evEl.dataset.ev); if (!ev) return;
-    // en táctil, el menú sale al soltar la pulsación larga (si no se movió el evento)
+    // en táctil, en la rejilla horaria el menú sale al soltar la pulsación larga (si no se movió el evento);
+    // en los eventos de todo el día y del mes, la pulsación larga ya lo abre (ver abajo)
     if (e.pointerType && e.pointerType !== 'mouse') return;
     openMenu(ev, e.clientX, e.clientY);
   });
+  // mantener pulsado un evento de todo el día o del mes (dedo o Pencil) → su menú; también en el iPad, que no lanza «contextmenu»
+  let lp = null;
+  el.addEventListener('pointerdown', e => {
+    clearTimeout(lp?.t); lp = null;
+    const chip = e.target.closest('.cal-ev[data-ev]'); if (!chip || e.pointerType === 'mouse') return;
+    const x = e.clientX, y = e.clientY;
+    lp = { x, y, t: setTimeout(() => { const ev = events.get(chip.dataset.ev); lp = null; if (ev) { swallowClick = Date.now() + 600; navigator.vibrate?.(15); openMenu(ev, x, y); } }, 500) };
+  });
+  el.addEventListener('pointermove', e => { if (lp && Math.hypot(e.clientX - lp.x, e.clientY - lp.y) > 10) { clearTimeout(lp.t); lp = null; } });
+  ['pointerup', 'pointercancel'].forEach(t => el.addEventListener(t, () => { if (lp) { clearTimeout(lp.t); lp = null; } }));
   const m = $('#calMenu', el);
   m.addEventListener('click', menuAction);
   m.addEventListener('keydown', e => {
