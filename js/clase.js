@@ -115,15 +115,15 @@ export function realtimeExtract(file, onProgress) {
   const ctx = new AudioContext(), src = ctx.createMediaElementSource(el), dest = ctx.createMediaStreamDestination(); dest.channelCount = 1; src.connect(dest);
   const playing = el.play(); ctx.resume();
   const mime = recMime(), rec = new MediaRecorder(dest.stream, { mimeType: mime, audioBitsPerSecond: 24000 }), parts = [];
-  let stopFn;
+  let stopFn, cancelled = false;
   const p = new Promise((ok, ko) => {
     rec.ondataavailable = e => e.data?.size && parts.push(e.data);
-    rec.onstop = () => { URL.revokeObjectURL(el.src); ctx.close().catch(() => {}); ok(new Blob(parts, { type: rec.mimeType || mime })); };
+    rec.onstop = () => { URL.revokeObjectURL(el.src); ctx.close().catch(() => {}); if (cancelled) ko(Object.assign(new Error('cancelado'), { code: 'cancel' })); else ok(new Blob(parts, { type: rec.mimeType || mime })); };
     el.onended = () => rec.state !== 'inactive' && rec.stop();
     el.ontimeupdate = () => onProgress?.(el.currentTime, el.duration);
     el.onerror = () => ko(new Error('no-se-puede-reproducir'));
     playing.then(() => rec.start(10000)).catch(ko);
-    stopFn = () => { el.pause(); if (rec.state !== 'inactive') rec.stop(); };
+    stopFn = () => { cancelled = true; el.pause(); if (rec.state !== 'inactive') rec.stop(); else ko(Object.assign(new Error('cancelado'), { code: 'cancel' })); };
   });
   p.cancel = () => stopFn?.();
   return p;

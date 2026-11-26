@@ -1752,12 +1752,14 @@ async function stopRec() {
   // el evento se vuelve a elegir con la hora real de la grabación
   if (job.cal) { try { const { cal, events } = await CL.classEvents(job.date); const ev = CL.bestEvent(events, job.from, job.to); if (ev) job.ev = { id: ev.id, summary: ev.summary || '', start: CL.evStart(ev), end: CL.evEnd(ev), link: ev.htmlLink || '', description: ev.description || '', priv: ev.extendedProperties?.private || {} }; job.cal = cal?.id || job.cal; } catch (e) {} }
   const file = new File([blob], job.title + '.' + CL.extOf(blob.type), { type: blob.type });
-  await processFile(file, job);
-  kv.del(BK).catch(() => {});
+  // la copia de seguridad solo se borra cuando el audio ya está guardado (si no, se puede recuperar al volver)
+  if (await processFile(file, job)) kv.del(BK).catch(() => {});
 }
 
 /* ---------- procesar: guardar audio → transcribir → nota ---------- */
+// Devuelve true en cuanto el audio queda guardado (en el dispositivo y en cola para Drive)
 async function processFile(file, job, rt) {
+  let saved = false;
   clBusy = true; wakeOn();
   try {
     let prep;
@@ -1774,10 +1776,11 @@ async function processFile(file, job, rt) {
     stepPill('Guardando el audio en Drive…');
     job.audio = await files.add('notas', audio, FR_DIR); job.dur = prep.duration || 0;
     if (!job.from) { job.to = file.lastModified || Date.now(); job.from = job.to - (job.dur || 3600) * 1000; }
-    await kv.set(JOB, job); syncNow();
+    await kv.set(JOB, job); saved = true; syncNow();
     await runJob(job, prep.chunks);
-  } catch (e) { console.error(e); pill(`<span>No se pudo preparar el audio: ${esc(e.message || e)}</span><button class="cl-link" data-cl="dismiss">Cerrar</button>`); }
+  } catch (e) { console.error(e); if (!saved) pill(`<span>No se pudo preparar el audio: ${esc(e.message || e)}</span><button class="cl-link" data-cl="dismiss">Cerrar</button>`); }
   finally { clBusy = false; wakeOff(); }
+  return saved;
 }
 let clRt = null;
 function startRealtime() {
@@ -1785,7 +1788,7 @@ function startRealtime() {
   const p = CL.realtimeExtract(file, (t, d) => stepPill(`Escuchando la grabación… ${CL.clock(t)} de ${CL.clock(d || 0)}`, '<button class="cl-link" data-cl="rtstop">Cancelar</button>'));
   clRtP = p; wakeOn();
   p.then(b => { clRtP = null; if (b.size < 2000) throw new Error('vacío'); return processFile(new File([b], job.title + '.' + CL.extOf(b.type), { type: b.type }), job, true); })
-    .catch(e => { clRtP = null; wakeOff(); pill(`<span>No se pudo escuchar la grabación (${esc(e.message || e)}).</span><button class="cl-link" data-cl="dismiss">Cerrar</button>`); });
+    .catch(e => { clRtP = null; wakeOff(); if (e.code === 'cancel') { pill(''); flash('Cancelado: no se ha creado ninguna nota'); return; } pill(`<span>No se pudo escuchar la grabación (${esc(e.message || e)}).</span><button class="cl-link" data-cl="dismiss">Cerrar</button>`); });
 }
 let clRtP = null;
 async function runJob(job, chunks) {
@@ -1888,7 +1891,7 @@ function mountClase() {
     if (a === 'cancel' || a === 'dismiss') { clRt = null; pill(''); }
     if (a === 'retry') { const j = await kv.get(JOB); if (j) runJob(j); else pill(''); }
     if (a === 'drop') { if (b.dataset.sure) { await kv.del(JOB); pill(''); flash('Descartada. El audio sigue en Drive, en Notas/Français A1.'); } else { b.dataset.sure = '1'; b.textContent = 'Pulsa otra vez para descartar'; } }
-    if (a === 'recover') { const r = await kv.get(BK); pill(''); if (r?.blob) { const job = { ...r.job, from: r.started, to: r.started + 1 }; await kv.del(BK); processFile(new File([r.blob], job.title + '.' + CL.extOf(r.blob.type), { type: r.blob.type }), job); } }
+    if (a === 'recover') { const r = await kv.get(BK); pill(''); if (r?.blob) { const job = { ...r.job, from: r.started, to: r.started + 1 }; if (await processFile(new File([r.blob], job.title + '.' + CL.extOf(r.blob.type), { type: r.blob.type }), job)) await kv.del(BK); } }
     if (a === 'forget') { await kv.del(BK); pill(''); }
   };
   pl.addEventListener('click', onCl); $('#clPanel').addEventListener('click', onCl);
