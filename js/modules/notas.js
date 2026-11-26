@@ -6,6 +6,8 @@ import { agente } from '../agente.js';
 import { loadHandFont } from '../handfont.js';
 import { space as who } from '../space.js';
 import { gcal } from '../gcal.js';
+import { drive } from '../drive.js';
+import { CONFIG } from '../config.js';
 import * as CL from '../clase.js';
 import { createSheet, importWorkbook, exportWorkbook, sheetFromRows, sheetTSV, newSheet, fmtVal } from '../hoja.js';
 const TXT = 18; // tamaño de letra estándar de todos los cuadros de texto
@@ -1728,7 +1730,7 @@ function stepPill(t, extra = '') { pill(`<span class="cl-spin"></span><span>${es
 
 /* ---------- grabar ---------- */
 async function startRec() {
-  const job = panelJob(); closeClase();
+  const job = { ...panelJob(), fuente: 'PABE · grabación' }; closeClase();
   try {
     clRec = await CL.startRecording({
       onWarn: t => flash(t),
@@ -1848,7 +1850,7 @@ async function classSummary(job) {
 /* ---------- crear la nota ---------- */
 function textH(s, cpl = 78) { return String(s).split('\n').reduce((n, l) => n + Math.max(1, Math.ceil(l.length / cpl)), 0) * TXT * 1.35 + 8; }
 async function createClassNote(job) {
-  ensureFrench();
+  ensureFrench(); ensureGrab();
   const a = job.ai, t1 = gid(), t2 = gid(), it1 = [], it2 = [], X = 80, MW = 760;
   const txtFile = new File([`${job.title}${job.ev ? ' · ' + job.ev.summary : ''}\nDuración: ${CL.clock(job.dur || 0)}\n\n${job.transcript.text}\n`], job.title + ' – transcription.txt', { type: 'text/plain' });
   const txtRef = await files.add('notas', txtFile, FR_DIR);
@@ -1866,10 +1868,11 @@ async function createClassNote(job) {
   block(`DEVOIRS\n${li(a.devoirs)}`);
   block(`QUESTIONS POUR LE PROF\n${li(a.questions)}`);
   it2.push({ id: gid(), t: 'x', x: X, y: 40, s: job.transcript.text, kb: true, mw: 900 });
-  const m = { id: gid(), title: job.title, titleManual: true, tags: frArea(), tabs: [{ id: t1, name: 'Clase' }, { id: t2, name: 'Transcription' }],
+  const m = { id: gid(), title: job.title, titleManual: true, tags: [...frArea(), ...grArea()], tabs: [{ id: t1, name: 'Clase' }, { id: t2, name: 'Transcription' }],
     created: job.from || Date.now(), updated: Date.now(), text: '', files: [], ink: false,
-    valores: { [FR_PROP]: frIds(a.etiquetas), ...(job.ev?.link ? { [FR_CAL_PROP]: job.ev.link } : {}) },
-    ...(job.ev ? { evento: { cal: job.cal, id: job.ev.id, titulo: job.ev.summary, inicio: job.ev.start, fin: job.ev.end, link: job.ev.link } } : {}) };
+    valores: { ...grVals('clase de francés', job.fuente || 'PABE · grabación'), [FR_PROP]: frIds(a.etiquetas), ...(job.ev?.link ? { [FR_CAL_PROP]: job.ev.link } : {}) },
+    ...(job.ev ? { evento: { cal: job.cal, id: job.ev.id, titulo: job.ev.summary, inicio: job.ev.start, fin: job.ev.end, link: job.ev.link } } : {}),
+    grabacion: { v: 1, tipo: 'clase de francés', fuente: job.fuente || 'PABE · grabación', fecha: new Date(job.from || Date.now()).toISOString(), titulo: a.tema || job.title, resumen: a.resume, puntos: a.grammaire, decisiones: [], tareas: a.devoirs.map(d => ({ tarea: d })), preguntas: a.questions, participantes: [], archivo: { n: job.audio.n, drive: job.audio.id } } };
   const doc = { tabs: { [t1]: it1, [t2]: it2 }, last: { tab: t1, id: it1[2]?.id } };
   m.text = noteText(m, doc);
   m.files = [...it1, ...it2].filter(i => i.f).map(i => ({ ...i.f, tab: t1, item: i.id }));
@@ -1885,7 +1888,7 @@ function mountClase() {
     if (a === 'close') closeClase();
     if (a === 'rec') startRec();
     if (a === 'stop') stopRec();
-    if (a === 'go') { const f = clFile, job = panelJob(); job.from = clRange.from; job.to = clRange.to; clFile = null; closeClase(); processFile(f, job); }
+    if (a === 'go') { const f = clFile, job = { ...panelJob(), fuente: 'PABE · importada' }; job.from = clRange.from; job.to = clRange.to; clFile = null; closeClase(); processFile(f, job); }
     if (a === 'other') { clFile = null; openClase(); }
     if (a === 'key') { agente.settings('Pega tu clave de OpenAI (Whisper) para transcribir las clases.'); }
     if (a === 'rt') startRealtime();
@@ -1907,6 +1910,7 @@ function mountClase() {
     }
   });
   $('#ntClase').onclick = () => $('#clPanel').hidden ? openClase() : closeClase();
+  mountPlaud();
   // al volver: una clase a medio preparar o una grabación que se cortó
   setTimeout(async () => {
     const j = await kv.get(JOB).catch(() => null);
@@ -1914,6 +1918,114 @@ function mountClase() {
     const r = await kv.get(BK).catch(() => null);
     if (r?.blob) pill(`<span>Hay una grabación de clase que se cortó (${esc(r.job?.title || '')}).</span><button class="btn" data-cl="recover">Recuperarla</button><button class="cl-link" data-cl="forget">Borrarla</button>`);
   }, 2500);
+}
+
+/* =================== grabaciones: área «Grabaciones», tipo y fuente · Plaud ===================
+   Todas las grabaciones (clases, reuniones, llamadas, charlas) llevan el área «Grabaciones» y dos columnas de etiquetas:
+   «Tipo de grabación» y «Fuente». Cada nota guarda además meta.grabacion (datos estructurados, listos para exportar a IRUSTA).
+   Plaud: Zapier deja cada transcripción + resumen en Drive «06 PABE OS/Notas/Grabaciones/Plaud/»; PABE los recoge solo,
+   crea la nota y mueve el archivo a «Plaud/Importados». */
+const GR_AREA = 'Grabaciones', GR_TIPO = 'gr-tipo', GR_FUENTE = 'gr-fuente', GR_TIPO_PROP = 'p_grtipo', GR_FUENTE_PROP = 'p_grfuente';
+const GR_TIPOS = ['clase de francés', 'reunión de trabajo', 'llamada telefónica', 'charla', 'otro'];
+const GR_FUENTES = ['PABE · grabación', 'PABE · importada', 'Plaud'];
+function ensureGrab() {
+  tags.system(GR_TIPO, 'Tipo de grabación'); tags.system(GR_FUENTE, 'Fuente de grabación');
+  for (const [s, list] of [[GR_TIPO, GR_TIPOS], [GR_FUENTE, GR_FUENTES]]) for (const n of list) if (!tags.list(s).some(t => nrm(t.nombre) === nrm(n))) tags.add(s, n, pickColor(s));
+  const cus = col.cfg?.props || [], add = [];
+  if (!cus.some(c => c.id === GR_TIPO_PROP)) add.push({ id: GR_TIPO_PROP, nombre: 'Tipo de grabación', tipo: 'tags', sistema: GR_TIPO });
+  if (!cus.some(c => c.id === GR_FUENTE_PROP)) add.push({ id: GR_FUENTE_PROP, nombre: 'Fuente', tipo: 'tags', sistema: GR_FUENTE });
+  if (add.length) col.setCfg({ ...(col.cfg || {}), props: [...cus, ...add] });
+}
+const grTag = (sys, n) => { const t = tags.list(sys).find(x => nrm(x.nombre) === nrm(n)) || tags.add(sys, n, pickColor(sys)); return t.id; };
+const grVals = (tipo, fuente) => ({ [GR_TIPO_PROP]: [grTag(GR_TIPO, GR_TIPOS.includes(tipo) ? tipo : 'otro')], [GR_FUENTE_PROP]: [grTag(GR_FUENTE, fuente)] });
+const grArea = () => areaIds([GR_AREA]);
+
+/* ---------- Plaud ---------- */
+const GR_SYS = `Eres el asistente de Patrick (arquitecto y empresario en San Sebastián; empresa I&S Homes). Recibes una grabación transcrita por Plaud (puede traer además un resumen de Plaud). Puede ser una reunión de trabajo, una llamada telefónica, una charla o una clase de francés. Devuelve SOLO un objeto JSON válido, sin texto alrededor:
+{"tipo": "uno de: ${GR_TIPOS.join(', ')}",
+ "titulo": "título corto y concreto en español (sin fecha)",
+ "resumen": "resumen en español de 4–8 frases",
+ "puntos": ["puntos clave"],
+ "decisiones": ["decisiones tomadas (vacío si ninguna)"],
+ "tareas": [{"tarea": "qué hay que hacer", "responsable": "quién (o vacío)", "fecha": "cuándo, si se dijo (o vacío)"}],
+ "preguntas": ["temas abiertos o dudas pendientes"],
+ "participantes": ["nombres que aparecen"]}
+Reglas: «llamada telefónica» si es una conversación por teléfono; «charla» si es una ponencia, webinar o conferencia; «reunión de trabajo» para reuniones (presenciales u online); «clase de francés» si es una clase de francés. No inventes nada que no esté en la grabación.`;
+async function grSummary(text, nombre) {
+  const out = await agente.once({ system: GR_SYS, max_tokens: 8000, content: `Archivo: ${nombre}\n\n${text.length > 150000 ? text.slice(0, 150000) : text}` });
+  const m = out.match(/\{[\s\S]*\}/); if (!m) throw new Error('respuesta sin JSON');
+  const j = JSON.parse(m[0]), arr = x => Array.isArray(x) ? x : x ? [x] : [];
+  return { tipo: String(j.tipo || 'otro').toLowerCase(), titulo: String(j.titulo || nombre), resumen: String(j.resumen || ''), puntos: arr(j.puntos).map(String), decisiones: arr(j.decisiones).map(String), tareas: arr(j.tareas).filter(t => t && t.tarea), preguntas: arr(j.preguntas).map(String), participantes: arr(j.participantes).map(String) };
+}
+async function createRecordingNote({ ai, text, fecha, fuente, fileRef, origen }) {
+  ensureGrab();
+  const t1 = gid(), t2 = gid(), it1 = [], X = 80, MW = 760;
+  if (fileRef) it1.push({ id: gid(), t: 'f', x: X, y: 40, f: fileRef });
+  let y = fileRef ? 130 : 40;
+  const block = s => { it1.push({ id: gid(), t: 'x', x: X, y: rd(y), s, kb: true, mw: MW }); y += textH(s) + 34; };
+  const li = xs => xs.length ? xs.map(x => '• ' + x).join('\n') : '• —';
+  block(`RESUMEN\n${ai.resumen || '—'}`);
+  if (ai.participantes.length) block(`PARTICIPANTES\n${ai.participantes.join(', ')}`);
+  block(`PUNTOS CLAVE\n${li(ai.puntos)}`);
+  block(`DECISIONES\n${li(ai.decisiones)}`);
+  const pR = 'p_' + gid(), pF = 'p_' + gid();
+  it1.push({ id: gid(), t: 'tb', x: X, y: rd(y), w: MW, n: 'Tareas', props: [{ id: pR, nombre: 'Responsable', tipo: 'text' }, { id: pF, nombre: 'Fecha', tipo: 'text' }], prefs: { names: { title: 'Tarea' } },
+    rows: ai.tareas.map(t => ({ id: gid(), title: String(t.tarea), created: Date.now(), valores: { [pR]: String(t.responsable || ''), [pF]: String(t.fecha || '') } })) });
+  y += 250 + Math.max(1, ai.tareas.length) * 52;
+  block(`PREGUNTAS ABIERTAS\n${li(ai.preguntas)}`);
+  const it2 = [{ id: gid(), t: 'x', x: X, y: 40, s: text, kb: true, mw: 900 }];
+  const day = isoLocal(fecha), tipo = GR_TIPOS.includes(ai.tipo) ? ai.tipo : 'otro';
+  const m = { id: gid(), title: `${ai.titulo} – ${day}`, titleManual: true, tags: [...grArea(), ...(tipo === 'clase de francés' ? frArea() : [])], tabs: [{ id: t1, name: 'Grabación' }, { id: t2, name: 'Transcripción' }],
+    created: fecha, updated: Date.now(), text: '', files: [], ink: false, valores: grVals(tipo, fuente),
+    grabacion: { v: 1, tipo, fuente, fecha: new Date(fecha).toISOString(), titulo: ai.titulo, resumen: ai.resumen, puntos: ai.puntos, decisiones: ai.decisiones, tareas: ai.tareas, preguntas: ai.preguntas, participantes: ai.participantes, archivo: fileRef ? { n: fileRef.n, drive: fileRef.id } : null, ...(origen || {}) } };
+  const doc = { tabs: { [t1]: it1, [t2]: it2 }, last: { tab: t1, id: it1[fileRef ? 1 : 0]?.id } };
+  m.text = noteText(m, doc);
+  m.files = it1.filter(i => i.f).map(i => ({ ...i.f, tab: t1, item: i.id }));
+  await col.put(m, doc);
+  return m;
+}
+let plaudBusy = false, plaudDirs = null;
+async function plaudFolders() {
+  if (plaudDirs) return plaudDirs;
+  const notas = await drive.findOrCreateFolder('Notas', CONFIG.rootFolder), gr = await drive.findOrCreateFolder('Grabaciones', notas);
+  const pl = await drive.findOrCreateFolder('Plaud', gr), done = await drive.findOrCreateFolder('Importados', pl);
+  return (plaudDirs = { pl, done });
+}
+async function plaudText(f) {
+  const API = 'https://www.googleapis.com/drive/v3/files/' + f.id;
+  if (f.mimeType === 'application/vnd.google-apps.document') return (await drive.req(`${API}/export?mimeType=text/plain`)).text();
+  if (/^application\/vnd\.google-apps/.test(f.mimeType)) return '';
+  return (await drive.req(`${API}?alt=media&supportsAllDrives=true`)).text();
+}
+// Busca transcripciones nuevas de Plaud y crea sus notas (solo en el PABE de Patrick, una a una)
+async function plaudScan() {
+  if (plaudBusy || clBusy || !who.isOwner || !drive.ready || !navigator.onLine) return;
+  plaudBusy = true;
+  try {
+    if (!(await agente.ensureKey())) return;
+    const { pl, done } = await plaudFolders();
+    const list = (await drive.list(`'${pl}' in parents and trashed=false and mimeType!='application/vnd.google-apps.folder'`, 'files(id,name,mimeType,createdTime,size)')).sort((a, b) => a.createdTime < b.createdTime ? -1 : 1);
+    let n = 0;
+    for (const f of list) {
+      const move = () => drive.req(`https://www.googleapis.com/drive/v3/files/${f.id}?addParents=${done}&removeParents=${pl}&supportsAllDrives=true`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: '{}' }).catch(e => console.warn('mover plaud', e));
+      if (col.list().some(m => m.grabacion?.plaud === f.id)) { await move(); continue; }
+      const text = (await plaudText(f)).trim(); if (text.length < 40) continue;
+      stepPill(`Plaud: preparando «${f.name}»…`);
+      const ai = await grSummary(text, f.name);
+      if (col.list().some(m => m.grabacion?.plaud === f.id)) { await move(); continue; } // otro dispositivo se adelantó
+      await createRecordingNote({ ai, text, fecha: new Date(f.createdTime).getTime(), fuente: 'Plaud', fileRef: { id: f.id, n: f.name, mime: f.mimeType, sz: +f.size || 0 }, origen: { plaud: f.id } });
+      await move(); n++;
+    }
+    if (n) { pill(`<span>✓ ${n === 1 ? 'Nueva grabación de Plaud en Notas' : n + ' grabaciones de Plaud nuevas en Notas'} (área Grabaciones)</span><a class="btn" href="#notas/todas" data-cl="dismiss">Ver</a><button class="cl-link" data-cl="dismiss">Cerrar</button>`); syncNow(); }
+    else if ($('#clPill')?.textContent.startsWith('Plaud:')) pill('');
+  } catch (e) { console.warn('plaud', e); if ($('#clPill')?.textContent.startsWith('Plaud:')) pill(''); }
+  finally { plaudBusy = false; }
+}
+function mountPlaud() {
+  setTimeout(plaudScan, 8000);
+  setInterval(plaudScan, 5 * 60000);
+  drive.onAuth(ok => { if (ok) setTimeout(plaudScan, 3000); });
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) setTimeout(plaudScan, 1500); });
 }
 
 /* =================== herramientas para el asistente =================== */
