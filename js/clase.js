@@ -1,10 +1,12 @@
 // Grabar clase / webconferencia: captura de audio (pestaña + micrófono en Chrome de ordenador), importación de grabaciones
 // (iPad y móvil: grabación de pantalla, vídeo o audio), preparación del audio para Whisper y transcripción.
 import { gcal } from './gcal.js';
+import { supa } from './supa.js';
+import { CONFIG } from './config.js';
 
 export const WHISPER_MAX = 24.5e6;          // OpenAI acepta hasta 25 MB por petición
 const RATE = 16000;                          // Whisper trabaja a 16 kHz mono
-const CHUNK_S = 600;                         // trozos de 10 minutos (≈19 MB en WAV)
+const CHUNK_S = 300;                         // trozos de 5 minutos (≈9,6 MB en WAV): cada uno se transcribe en pocos segundos
 const WHISPER_OK = /\.(webm|m4a|mp4|mp3|mpeg|mpga|wav|ogg|oga|flac)$/i;
 const norm = x => String(x || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
 
@@ -64,15 +66,19 @@ export async function startRecording({ onEnd, onWarn, onBackup } = {}) {
 export async function prepareAudio(file, onStep) {
   const name = file.name || 'grabacion.' + extOf(file.type || '');
   const isAudio = /^audio\//.test(file.type) || /\.(m4a|mp3|wav|webm|ogg|oga|flac|aac)$/i.test(name);
-  if (file.size <= WHISPER_MAX && WHISPER_OK.test(name) && (isAudio || file.size <= 8e6)) {
-    return { save: file, chunks: [{ blob: file, name, offset: 0 }], duration: await mediaDuration(file) };
-  }
+  // Audio corto (≤ 5 MB): tal cual. Si no, se trocea en partes de 5 minutos para que cada petición sea rápida.
+  const direct = file.size <= WHISPER_MAX && WHISPER_OK.test(name) && (isAudio || file.size <= 8e6);
+  if (direct && file.size <= 5e6) return { save: file, chunks: [{ blob: file, name, offset: 0 }], duration: await mediaDuration(file) };
   const limit = touch() ? 380e6 : 1.6e9;
   if (file.size > limit) throw Object.assign(new Error('grande'), { code: 'realtime' });
   onStep?.('Extrayendo el audio…');
   let pcm;
   try { pcm = await decode16k(file); }
-  catch (e) { console.warn('decodificar', e); throw Object.assign(new Error('decode'), { code: 'realtime' }); }
+  catch (e) {
+    console.warn('decodificar', e);
+    if (direct) return { save: file, chunks: [{ blob: file, name, offset: 0 }], duration: await mediaDuration(file) };
+    throw Object.assign(new Error('decode'), { code: 'realtime' });
+  }
   const duration = pcm.length / RATE, chunks = [];
   for (let s = 0, k = 1; s < pcm.length; s += CHUNK_S * RATE, k++) chunks.push({ blob: wav(pcm.subarray(s, Math.min(pcm.length, s + CHUNK_S * RATE))), name: `parte-${k}.wav`, offset: s / RATE });
   // si el original es un audio, se guarda el original (más ligero); si es vídeo, el audio extraído
@@ -147,8 +153,11 @@ async function whisper(blob, name, key, prompt, retry = true) {
   const fd = new FormData();
   fd.append('file', blob, name); fd.append('model', 'whisper-1'); fd.append('response_format', 'verbose_json'); fd.append('prompt', prompt); fd.append('temperature', '0');
   let r;
-  try { r = await fetch('https://api.openai.com/v1/audio/transcriptions', { method: 'POST', headers: { Authorization: 'Bearer ' + key }, body: fd }); }
-  catch (e) { if (retry) { await new Promise(s => setTimeout(s, 3000)); return whisper(blob, name, key, prompt, false); } throw Object.assign(new Error('red'), { code: 'red' }); }
+  // OpenAI no acepta llamadas de audio hechas directamente desde una web: van por el puente «whisper» del servidor de PABE
+  const t = await supa.token();
+  if (!t) throw Object.assign(new Error('sesion'), { code: 'sesion' });
+  try { r = await fetch(`${CONFIG.supabase.url}/functions/v1/whisper`, { method: 'POST', headers: { apikey: CONFIG.supabase.key, Authorization: 'Bearer ' + t, 'x-openai-key': key.replace(/[^\x21-\x7e]/g, '') }, body: fd }); }
+  catch (e) { if (retry) { await new Promise(s => setTimeout(s, 3000)); return whisper(blob, name, key, prompt, false); } throw Object.assign(new Error('red'), { code: 'red', msg: String(e.message || e) }); }
   if ((r.status === 429 || r.status >= 500) && retry) { await new Promise(s => setTimeout(s, 4000)); return whisper(blob, name, key, prompt, false); }
   if (!r.ok) { const t = await r.text().catch(() => ''); let m = ''; try { m = JSON.parse(t).error?.message || ''; } catch (e) {} throw Object.assign(new Error('whisper ' + r.status), { code: r.status, msg: m }); }
   return r.json();
@@ -158,7 +167,9 @@ export function whisperError(e) {
   if (e.code === 401) return 'La clave de OpenAI no es válida. Revísala en ⚙ del asistente.';
   if (e.code === 429) return 'OpenAI: sin saldo o demasiadas peticiones. Revisa el saldo en platform.openai.com y reintenta.';
   if (e.code === 413) return 'El audio es demasiado grande para Whisper.';
-  if (e.code === 'red') return 'Sin conexión con OpenAI. Reintenta cuando tengas conexión.';
+  if (e.code === 'red') return 'No pude llegar a Whisper (' + (e.msg || 'red') + '). Reintenta en un momento.';
+  if (e.code === 'sesion') return 'Tu sesión de PABE ha caducado: vuelve a entrar y reintenta.';
+  if (e.code === 403) return 'Esta cuenta no tiene acceso a la transcripción de PABE.';
   return 'Whisper no pudo transcribir (' + (e.code || 'error') + ')' + (e.msg ? ': ' + e.msg : '.');
 }
 
