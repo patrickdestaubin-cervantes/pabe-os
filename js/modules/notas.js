@@ -1668,6 +1668,8 @@ function ensureFrench() {
   if (!cus.some(c => c.id === FR_CAL_PROP)) add.push({ id: FR_CAL_PROP, nombre: 'Clase (calendario)', tipo: 'url' });
   if (add.length) col.setCfg({ ...(col.cfg || {}), props: [...cus, ...add] });
 }
+// Área de las clases: si ya existe «Francés A1» o «Français A1» se usa esa (no se duplica)
+function frArea() { const t = tags.list(SYS).find(x => /^franc(e|ai)s\s*a1$/.test(nrm(x.nombre))); return t ? [t.id] : areaIds([FR_AREA]); }
 const frIds = names => (names || []).map(n => tags.list(FR).find(t => nrm(t.nombre) === nrm(n))?.id).filter(Boolean);
 
 /* ---------- panel ---------- */
@@ -1864,7 +1866,7 @@ async function createClassNote(job) {
   block(`DEVOIRS\n${li(a.devoirs)}`);
   block(`QUESTIONS POUR LE PROF\n${li(a.questions)}`);
   it2.push({ id: gid(), t: 'x', x: X, y: 40, s: job.transcript.text, kb: true, mw: 900 });
-  const m = { id: gid(), title: job.title, titleManual: true, tags: areaIds([FR_AREA]), tabs: [{ id: t1, name: 'Clase' }, { id: t2, name: 'Transcription' }],
+  const m = { id: gid(), title: job.title, titleManual: true, tags: frArea(), tabs: [{ id: t1, name: 'Clase' }, { id: t2, name: 'Transcription' }],
     created: job.from || Date.now(), updated: Date.now(), text: '', files: [], ink: false,
     valores: { [FR_PROP]: frIds(a.etiquetas), ...(job.ev?.link ? { [FR_CAL_PROP]: job.ev.link } : {}) },
     ...(job.ev ? { evento: { cal: job.cal, id: job.ev.id, titulo: job.ev.summary, inicio: job.ev.start, fin: job.ev.end, link: job.ev.link } } : {}) };
