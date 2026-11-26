@@ -185,6 +185,25 @@ export async function classEvents(day) {
   const ev = (await gcal.events(cal.id, d0, d1)).filter(e => e.status !== 'cancelled');
   return { cal, events: ev };
 }
+// Eventos de un día en los calendarios visibles (para vincular reuniones, llamadas y clases). Cada evento lleva _cal.
+const isFr = c => /francais\s*a1/.test(norm(c.summaryOverride || c.summary));
+export async function dayEvents(day) {
+  if (!gcal.ready) return { events: [] };
+  const cals = (await gcal.calendars()).filter(c => !c.deleted && (c.selected !== false || isFr(c)) && !/holiday|#contacts|#weather|addressbook/.test(c.id));
+  const d0 = new Date(day + 'T00:00'), d1 = new Date(d0.getTime() + 864e5);
+  const lists = await Promise.all(cals.map(c => gcal.events(c.id, d0, d1).then(evs => evs.map(e => ({ ...e, _cal: { id: c.id, nombre: c.summaryOverride || c.summary || '', fr: isFr(c) } }))).catch(() => [])));
+  const me = e => (e.attendees || []).find(a => a.self);
+  const events = lists.flat().filter(e => e.status !== 'cancelled' && me(e)?.responseStatus !== 'declined' && e.eventType !== 'workingLocation' && e.eventType !== 'outOfOffice' && e.eventType !== 'focusTime')
+    .sort((a, b) => evStart(a) - evStart(b));
+  return { events };
+}
+// Enlace de videollamada del evento (Meet, Zoom, Teams, Webex…), o '' si no tiene
+export function meetLink(e) {
+  const v = (e.conferenceData?.entryPoints || []).find(p => p.entryPointType === 'video')?.uri || e.hangoutLink;
+  if (v) return v;
+  const m = /https?:\/\/[^\s"<>]*(zoom\.us|meet\.google\.com|teams\.microsoft\.com|teams\.live\.com|webex\.com|whereby\.com|jit\.si)[^\s"<>]*/i.exec((e.location || '') + ' ' + (e.description || ''));
+  return m ? m[0] : '';
+}
 export const evStart = e => new Date(e.start?.dateTime || e.start?.date + 'T00:00').getTime();
 export const evEnd = e => new Date(e.end?.dateTime || e.end?.date + 'T00:00').getTime();
 export function bestEvent(events, from, to) {
@@ -196,7 +215,7 @@ export function bestEvent(events, from, to) {
 }
 // Deja en el evento el enlace a la nota (en la descripción y como dato privado de PABE)
 export async function linkEvent(cal, ev, noteId, url) {
-  const desc = ev.description || '', line = 'Nota de la clase en PABE: ' + url;
+  const desc = ev.description || '', line = 'Nota en PABE: ' + url;
   const description = desc.includes(url) ? desc : (desc ? desc + '\n\n' : '') + line;
   return gcal.patch(cal.id, ev.id, { description, extendedProperties: { private: { ...(ev.extendedProperties?.private || {}), pabeNota: noteId } } });
 }

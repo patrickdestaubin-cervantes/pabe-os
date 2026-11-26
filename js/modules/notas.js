@@ -61,7 +61,7 @@ const HTML = `
  <button class="tl" id="ntShapes" aria-label="Reconocer formas"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8.5" cy="8.5" r="4.5"/><rect x="12" y="12" width="8" height="8" rx="1"/></svg></button>
  <span class="sepr"></span>
  <label class="tl" title="Adjuntar archivo o imagen" aria-label="Adjuntar"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M20 11.5l-8 8a5 5 0 0 1-7-7l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7L9.7 17.2a1.7 1.7 0 0 1-2.4-2.4L15 7"/></svg><input type="file" id="ntFile" multiple hidden></label>
- <button class="tl" id="ntClase" title="Grabar clase / webconferencia" aria-label="Grabar clase"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="3.6" fill="#e5484d" stroke="none"/></svg></button>
+ <button class="tl" id="ntClase" title="Grabar clase o reunión" aria-label="Grabar clase o reunión"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="3.6" fill="#e5484d" stroke="none"/></svg></button>
  <button class="tl" id="ntUndo" title="Deshacer (Ctrl+Z)" aria-label="Deshacer"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 7H4V2"/><path d="M4 7a8 8 0 1 1-1 7"/></svg></button>
  <button class="tl" id="ntCopy" title="Copiar (Ctrl+C)" aria-label="Copiar" hidden><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg></button>
  <button class="tl" id="ntCut" title="Cortar (Ctrl+X)" aria-label="Cortar" hidden><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="6" cy="18" r="3"/><circle cx="18" cy="18" r="3"/><path d="M8.2 15.8L19 4M15.8 15.8L5 4"/></svg></button>
@@ -1675,26 +1675,57 @@ function frArea() { const t = tags.list(SYS).find(x => /^franc(e|ai)s\s*a1$/.tes
 const frIds = names => (names || []).map(n => tags.list(FR).find(t => nrm(t.nombre) === nrm(n))?.id).filter(Boolean);
 
 /* ---------- panel ---------- */
+const GR_DIR = ['Notas', 'Grabaciones'];
+const isClase = t => (t || 'clase de francés') === 'clase de francés';
+const ek = e => e._cal.id + '|' + e.id;
+const cap = t => t.charAt(0).toUpperCase() + t.slice(1);
+const safeName = t => String(t).replace(/[\\/:*?"<>|]+/g, '-').replace(/\s+/g, ' ').trim().slice(0, 80);
+const lastTipo = () => { try { return localStorage.getItem('pabe:recTipo'); } catch (e) { return null; } };
+let clTipo = null; // tipo elegido a mano en el panel (si no, lo decide el evento del calendario)
+function evInfo(e) {
+  if (!e) return null;
+  return { id: e.id, cal: e._cal?.id || null, calName: e._cal?.nombre || '', fr: !!e._cal?.fr, summary: e.summary || '', start: CL.evStart(e), end: CL.evEnd(e), link: e.htmlLink || '', meet: CL.meetLink(e), description: e.description || '', priv: e.extendedProperties?.private || {},
+    people: (e.attendees || []).filter(a => !a.self && !a.resource).map(a => a.displayName || a.email).filter(Boolean).slice(0, 30) };
+}
+function tipoOf(ev) {
+  if (!ev) return 'reunión de trabajo';
+  const s = nrm(ev.summary);
+  if (ev.fr || /franc(ai|e)s|lecon|cours de/.test(s)) return 'clase de francés';
+  if (/llamada|telefon|call\b/.test(s)) return 'llamada telefónica';
+  if (/charla|webinar|ponencia|conferencia|seminario|jornada/.test(s)) return 'charla';
+  return 'reunión de trabajo';
+}
+// El evento que coincide con la grabación (solapado o empezando a menos de 30 min)
+function nearEvent(events, from, to) {
+  const ev = CL.bestEvent(events.filter(e => e.start?.dateTime), from, to); if (!ev) return null;
+  const ov = Math.min(to, CL.evEnd(ev)) - Math.max(from, CL.evStart(ev));
+  return ov > 0 || Math.abs(CL.evStart(ev) - from) < 30 * 60e3 ? ev : null;
+}
+const mtgTitle = (ev, tipo, date) => `${safeName(ev?.summary || cap(tipo))} – ${date}`;
 function clPanelHtml() {
-  const rec = CL.canRecord(), mob = !rec;
-  return `<div class="cl-h"><b>Grabar clase / webconferencia</b><button class="ico" data-cl="close" aria-label="Cerrar">×</button></div>
-  <div class="cl-row"><label>Leçon<input id="clNum" inputmode="numeric" value="${nextLesson()}"></label><label>Fecha<input id="clDate" type="date" value="${isoLocal(Date.now())}"></label></div>
+  const rec = CL.canRecord(), mob = !rec, tipo = clTipo || lastTipo() || 'reunión de trabajo';
+  const notif = rec && 'Notification' in window && Notification.permission === 'default';
+  return `<div class="cl-h"><b>Grabar clase o reunión</b><button class="ico" data-cl="close" aria-label="Cerrar">×</button></div>
+  <div class="cl-row"><label>Tipo<select id="clTipo">${GR_TIPOS.filter(t => t !== 'otro').map(t => `<option value="${esc(t)}" ${t === tipo ? 'selected' : ''}>${esc(cap(t))}</option>`).join('')}</select></label><label>Fecha<input id="clDate" type="date" value="${isoLocal(Date.now())}"></label></div>
+  <div class="cl-row" id="clNumRow" ${isClase(tipo) ? '' : 'hidden'}><label>Leçon<input id="clNum" inputmode="numeric" value="${nextLesson()}"></label></div>
   <div class="cl-ev" id="clEvBox"></div>
   <div class="cl-warn" id="clKey" hidden></div>
   ${clFile ? `<div class="cl-file"><span class="fic">${esc((clFile.name.split('.').pop() || '').slice(0, 4))}</span><span>${esc(clFile.name)}<small>${size(clFile.size)}</small></span></div><button class="btn cl-big" data-cl="go">Transcribir y crear la nota</button><button class="cl-link" data-cl="other">Elegir otro archivo</button>`
-    : `${rec ? `<button class="btn cl-big cl-recb" data-cl="rec"><i></i>Grabar clase</button><p class="cl-hint">Elige la pestaña de la clase (Zoom, Meet o Teams en Chrome) y marca <b>«Compartir también el audio de la pestaña»</b>. Tu micrófono también se graba. Puedes seguir usando PABE mientras tanto.</p>` : ''}
+    : `${rec ? `<button class="btn cl-big cl-recb" data-cl="rec"><i></i>Grabar</button><p class="cl-hint">Elige la pestaña de la reunión o la clase (Meet, Zoom o Teams en Chrome) y marca <b>«Compartir también el audio de la pestaña»</b>. Tu micrófono también se graba. Puedes seguir usando PABE mientras tanto.</p>` : ''}
   <label class="btn cl-big ${rec ? 'cl-sec' : ''}">Importar grabación<input type="file" id="clFileIn" accept="audio/*,video/*,.m4a,.mov,.mp4,.webm,.mp3,.wav" hidden></label>
-  <p class="cl-hint">${mob ? 'En el iPad o el móvil: graba la clase con la <b>Grabación de pantalla</b> (mantén pulsado el botón y activa el micrófono) y luego elige aquí el vídeo, o un audio de Notas de voz.' : 'O elige un vídeo o audio ya grabado.'}</p>`}`;
+  <p class="cl-hint">${mob ? 'En el iPad o el móvil: graba con la <b>Grabación de pantalla</b> (mantén pulsado el botón y activa el micrófono) y luego elige aquí el vídeo, o un audio de Notas de voz. Las llamadas y reuniones presenciales, mejor con el Plaud: llegan solas.' : 'O elige un vídeo o audio ya grabado.'}</p>
+  ${rec ? `<p class="cl-hint">Cuando empieza una reunión de tu calendario con enlace de Meet, Zoom o Teams, PABE te pregunta si la grabas.${notif ? ' <button class="cl-link" data-cl="notif">Avisarme también con una notificación</button>' : ''}</p>` : ''}`}`;
 }
 async function openClase() {
-  if (clRec) { flash('Ya se está grabando una clase'); return; }
-  if (clBusy) { flash('Se está preparando la nota de la clase anterior'); return; }
+  if (clRec) { flash('Ya se está grabando'); return; }
+  if (clBusy) { flash('Se está preparando la nota de la grabación anterior'); return; }
   const p = $('#clPanel'); p.innerHTML = clPanelHtml(); p.hidden = false;
   clRange = clFile ? clRange : { from: Date.now(), to: Date.now() + 3600e3 };
   if (clFile) $('#clDate').value = isoLocal(clRange.to);
   loadEvents(); checkKey();
 }
-function closeClase() { $('#clPanel').hidden = true; }
+function closeClase() { $('#clPanel').hidden = true; clTipo = null; }
+function setTipo(t) { const s = $('#clTipo'); if (s) s.value = t; const r = $('#clNumRow'); if (r) r.hidden = !isClase(t); }
 async function checkKey() {
   const k = await agente.openaiKey(), box = $('#clKey'); if (!box) return;
   box.hidden = !!k;
@@ -1703,19 +1734,33 @@ async function checkKey() {
 async function loadEvents() {
   const box = $('#clEvBox'); if (!box) return;
   const day = $('#clDate').value;
-  box.innerHTML = '<span class="mut">Buscando la clase en el calendario «Français A1»…</span>';
-  try { clEv = { ...(await CL.classEvents(day)), pick: '' }; } catch (e) { clEv = { cal: null, events: [], pick: '' }; }
+  box.innerHTML = '<span class="mut">Buscando en tu calendario…</span>';
+  try { clEv = { ...(await CL.dayEvents(day)), pick: '' }; } catch (e) { clEv = { events: [], pick: '' }; }
   if (!$('#clEvBox') || $('#clDate').value !== day) return;
-  if (!clEv.cal) { box.innerHTML = `<span class="mut">${gcalReady() ? 'No encuentro el calendario «Français A1».' : 'Conecta Google para vincular la nota al calendario.'}</span>`; return; }
-  const best = CL.bestEvent(clEv.events, clRange.from, clRange.to); clEv.pick = best?.id || '';
-  box.innerHTML = clEv.events.length ? `<label>Evento del calendario<select id="clEvSel">${clEv.events.map(e => `<option value="${esc(e.id)}" ${e.id === clEv.pick ? 'selected' : ''}>${esc(e.summary || 'Français A1')} · ${e.start?.dateTime ? hm(CL.evStart(e)) + '–' + hm(CL.evEnd(e)) : 'todo el día'}</option>`).join('')}<option value="">Sin vincular</option></select></label>` : '<span class="mut">No hay clase en «Français A1» ese día: la nota no se vinculará.</span>';
-  const n = evNum(best); if (n && $('#clNum')) $('#clNum').value = n;
+  if (!gcalReady()) { box.innerHTML = '<span class="mut">Conecta Google para vincular la nota al calendario.</span>'; return; }
+  const pool = clTipo && isClase(clTipo) && clEv.events.some(e => e._cal.fr) ? clEv.events.filter(e => e._cal.fr) : clEv.events;
+  const best = nearEvent(pool, clRange.from, clRange.to); clEv.pick = best ? ek(best) : '';
+  const evs = clEv.events.filter(e => e.start?.dateTime);
+  box.innerHTML = evs.length ? `<label>Evento del calendario<select id="clEvSel"><option value="">Sin vincular</option>${evs.map(e => `<option value="${esc(ek(e))}" ${ek(e) === clEv.pick ? 'selected' : ''}>${hm(CL.evStart(e))}–${hm(CL.evEnd(e))} · ${esc(e.summary || 'Sin título')}${e._cal.nombre ? ' · ' + esc(e._cal.nombre) : ''}</option>`).join('')}</select></label>` : '<span class="mut">No hay eventos en tu calendario ese día: la nota no se vinculará.</span>';
+  pickedEvent(best);
+}
+// Al elegir un evento, el tipo (y la lección) salen de él, salvo que se haya cambiado el tipo a mano
+function pickedEvent(e) {
+  if (!clTipo && e) setTipo(tipoOf(evInfo(e)));
+  const n = evNum(e); if (n && $('#clNum')) $('#clNum').value = n;
 }
 const gcalReady = () => gcal.ready;
 function panelJob() {
-  const date = $('#clDate')?.value || isoLocal(Date.now()), num = +($('#clNum')?.value || nextLesson()) || nextLesson();
-  const sel = $('#clEvSel') ? $('#clEvSel').value : clEv.pick, ev = clEv.events.find(e => e.id === sel);
-  return { id: gid(), num, date, title: lessonTitle(num, date), cal: ev ? clEv.cal.id : null, ev: ev ? { id: ev.id, summary: ev.summary || '', start: CL.evStart(ev), end: CL.evEnd(ev), link: ev.htmlLink || '', description: ev.description || '', priv: ev.extendedProperties?.private || {} } : null };
+  const date = $('#clDate')?.value || isoLocal(Date.now()), tipo = $('#clTipo')?.value || 'reunión de trabajo';
+  const sel = $('#clEvSel') ? $('#clEvSel').value : clEv.pick, ev = evInfo(clEv.events.find(e => ek(e) === sel));
+  const num = isClase(tipo) ? (+($('#clNum')?.value || nextLesson()) || nextLesson()) : 0;
+  try { localStorage.setItem('pabe:recTipo', tipo); } catch (e) {}
+  return { id: gid(), tipo, num, date, title: isClase(tipo) ? lessonTitle(num, date) : mtgTitle(ev, tipo, date), cal: ev ? ev.cal : null, ev };
+}
+// Trabajo de grabación para un evento concreto (aviso del calendario)
+function eventJob(e) {
+  const ev = evInfo(e), tipo = tipoOf(ev), date = isoLocal(ev.start), num = isClase(tipo) ? (evNum(e) || nextLesson()) : 0;
+  return { id: gid(), tipo, num, date, title: isClase(tipo) ? lessonTitle(num, date) : mtgTitle(ev, tipo, date), cal: ev.cal, ev, fixed: true };
 }
 
 /* ---------- barra de estado (grabando / preparando) ---------- */
@@ -1723,14 +1768,15 @@ function pill(html) { const p = $('#clPill'); if (!p) return; p.hidden = !html; 
 let tickT = null;
 function recPill() {
   clearInterval(tickT);
-  const draw = () => { if (!clRec) return clearInterval(tickT); const lv = clRec.level(); pill(`<span class="cl-dot" style="--lv:${Math.min(1, lv * 3).toFixed(2)}"></span><b>Grabando clase</b><span class="cl-t">${CL.clock(clRec.secs)}</span><button class="btn" data-cl="stop">Detener</button>`); };
+  const what = isClase(clRec?.job?.tipo) ? 'clase' : (clRec?.job?.ev?.summary ? '«' + clRec.job.ev.summary.slice(0, 40) + '»' : '');
+  const draw = () => { if (!clRec) return clearInterval(tickT); const lv = clRec.level(); pill(`<span class="cl-dot" style="--lv:${Math.min(1, lv * 3).toFixed(2)}"></span><b>Grabando ${esc(what)}</b><span class="cl-t">${CL.clock(clRec.secs)}</span><button class="btn" data-cl="stop">Detener</button>`); };
   draw(); tickT = setInterval(draw, 500);
 }
 function stepPill(t, extra = '') { pill(`<span class="cl-spin"></span><span>${esc(t)}</span>${extra}`); }
 
 /* ---------- grabar ---------- */
-async function startRec() {
-  const job = { ...panelJob(), fuente: 'PABE · grabación' }; closeClase();
+async function startRec(job) {
+  job = { ...(job || panelJob()), fuente: 'PABE · grabación' }; closeClase();
   try {
     clRec = await CL.startRecording({
       onWarn: t => flash(t),
@@ -1754,7 +1800,7 @@ async function stopRec() {
   const blob = await r.stop(); clRec = null; window.removeEventListener('beforeunload', recGuard);
   const job = { ...r.job, from: r.started, to: Date.now() };
   // el evento se vuelve a elegir con la hora real de la grabación
-  if (job.cal) { try { const { cal, events } = await CL.classEvents(job.date); const ev = CL.bestEvent(events, job.from, job.to); if (ev) job.ev = { id: ev.id, summary: ev.summary || '', start: CL.evStart(ev), end: CL.evEnd(ev), link: ev.htmlLink || '', description: ev.description || '', priv: ev.extendedProperties?.private || {} }; job.cal = cal?.id || job.cal; } catch (e) {} }
+  if (job.cal && !job.fixed) { try { const { events } = await CL.dayEvents(job.date); const ev = nearEvent(events.filter(e => e._cal.id === job.cal), job.from, job.to); if (ev) { job.ev = evInfo(ev); if (!isClase(job.tipo)) job.title = mtgTitle(job.ev, job.tipo, job.date); } } catch (e) {} }
   const file = new File([blob], job.title + '.' + CL.extOf(blob.type), { type: blob.type });
   // la copia de seguridad solo se borra cuando el audio ya está guardado (si no, se puede recuperar al volver)
   if (await processFile(file, job)) kv.del(BK).catch(() => {});
@@ -1778,7 +1824,7 @@ async function processFile(file, job, rt) {
     const ext = prep.saveExt || (file.name.split('.').pop() || CL.extOf(file.type)).toLowerCase();
     const audio = new File([prep.save], job.title + '.' + ext, { type: prep.save.type || file.type });
     stepPill('Guardando el audio en Drive…');
-    job.audio = await files.add('notas', audio, FR_DIR); job.dur = prep.duration || 0;
+    job.audio = await files.add('notas', audio, isClase(job.tipo) ? FR_DIR : GR_DIR); job.dur = prep.duration || 0;
     if (!job.from) { job.to = file.lastModified || Date.now(); job.from = job.to - (job.dur || 3600) * 1000; }
     await kv.set(JOB, job); saved = true; syncNow();
     await runJob(job, prep.chunks);
@@ -1807,16 +1853,16 @@ async function runJob(job, chunks) {
       await kv.set(JOB, job);
     }
     if (!job.ai) {
-      stepPill('Preparando la nota de la clase…');
+      stepPill(isClase(job.tipo) ? 'Preparando la nota de la clase…' : 'Preparando la nota…');
       if (!(await agente.ensureKey())) { pillRetry(job, 'Transcripción lista. Falta la clave de Claude para preparar la nota.', true); return; }
-      try { job.ai = await classSummary(job); } catch (e) { console.error(e); pillRetry(job, 'Claude no pudo preparar la nota (' + (e.message || e) + ').'); return; }
+      try { job.ai = isClase(job.tipo) ? await classSummary(job) : await grSummary(job.transcript.text, job.title, jobContext(job)); } catch (e) { console.error(e); pillRetry(job, 'Claude no pudo preparar la nota (' + (e.message || e) + ').'); return; }
       await kv.set(JOB, job);
     }
     stepPill('Creando la nota…');
-    const id = await createClassNote(job);
+    const id = isClase(job.tipo) ? await createClassNote(job) : await createMeetingNote(job);
     await kv.del(JOB);
     const here = active() && (!cur || !cur.saved || isBlank());
-    pill(`<span>✓ ${esc(job.title)} lista${job.ev ? ' y vinculada a la clase del calendario' : ''}</span>${here ? '' : `<a class="btn" href="#notas/${id}" data-cl="dismiss">Abrir nota</a>`}<button class="cl-link" data-cl="dismiss">Cerrar</button>`);
+    pill(`<span>✓ ${esc(job.title)} lista${job.ev ? ' y vinculada al evento del calendario' : ''}</span>${here ? '' : `<a class="btn" href="#notas/${id}" data-cl="dismiss">Abrir nota</a>`}<button class="cl-link" data-cl="dismiss">Cerrar</button>`);
     if (here) { await openNote(id); setTimeout(() => { if ($('#clPill')?.textContent.includes(job.title)) pill(''); }, 8000); }
   } catch (e) { console.error(e); pillRetry(job, 'Algo falló: ' + (e.message || e)); }
   finally { clBusy = false; wakeOff(); }
@@ -1870,7 +1916,7 @@ async function createClassNote(job) {
   it2.push({ id: gid(), t: 'x', x: X, y: 40, s: job.transcript.text, kb: true, mw: 900 });
   const m = { id: gid(), title: job.title, titleManual: true, tags: [...frArea(), ...grArea()], tabs: [{ id: t1, name: 'Clase' }, { id: t2, name: 'Transcription' }],
     created: job.from || Date.now(), updated: Date.now(), text: '', files: [], ink: false,
-    valores: { ...grVals('clase de francés', job.fuente || 'PABE · grabación'), [FR_PROP]: frIds(a.etiquetas), ...(job.ev?.link ? { [FR_CAL_PROP]: job.ev.link } : {}) },
+    valores: { ...grVals('clase de francés', job.fuente || 'PABE · grabación'), [FR_PROP]: frIds(a.etiquetas), ...(job.ev?.link ? { [FR_CAL_PROP]: job.ev.link, [GR_CAL_PROP]: job.ev.link } : {}) },
     ...(job.ev ? { evento: { cal: job.cal, id: job.ev.id, titulo: job.ev.summary, inicio: job.ev.start, fin: job.ev.end, link: job.ev.link } } : {}),
     grabacion: { v: 1, tipo: 'clase de francés', fuente: job.fuente || 'PABE · grabación', fecha: new Date(job.from || Date.now()).toISOString(), titulo: a.tema || job.title, resumen: a.resume, puntos: a.grammaire, decisiones: [], tareas: a.devoirs.map(d => ({ tarea: d })), preguntas: a.questions, participantes: [], archivo: { n: job.audio.n, drive: job.audio.id } } };
   const doc = { tabs: { [t1]: it1, [t2]: it2 }, last: { tab: t1, id: it1[2]?.id } };
@@ -1887,6 +1933,9 @@ function mountClase() {
     const b = e.target.closest('[data-cl]'); if (!b) return; const a = b.dataset.cl;
     if (a === 'close') closeClase();
     if (a === 'rec') startRec();
+    if (a === 'wrec') { const e = wShown; wShown = null; pill(''); if (e) startRec(eventJob(e)); }
+    if (a === 'wno') { wShown = null; pill(''); }
+    if (a === 'notif') { try { await Notification.requestPermission(); } catch (e) {} b.remove(); }
     if (a === 'stop') stopRec();
     if (a === 'go') { const f = clFile, job = { ...panelJob(), fuente: 'PABE · importada' }; job.from = clRange.from; job.to = clRange.to; clFile = null; closeClase(); processFile(f, job); }
     if (a === 'other') { clFile = null; openClase(); }
@@ -1895,13 +1944,15 @@ function mountClase() {
     if (a === 'rtstop') { clRtP?.cancel(); }
     if (a === 'cancel' || a === 'dismiss') { clRt = null; pill(''); }
     if (a === 'retry') { const j = await kv.get(JOB); if (j) runJob(j); else pill(''); }
-    if (a === 'drop') { if (b.dataset.sure) { await kv.del(JOB); pill(''); flash('Descartada. El audio sigue en Drive, en Notas/Français A1.'); } else { b.dataset.sure = '1'; b.textContent = 'Pulsa otra vez para descartar'; } }
+    if (a === 'drop') { if (b.dataset.sure) { const j0 = await kv.get(JOB).catch(() => null); await kv.del(JOB); pill(''); flash('Descartada. El audio sigue en Drive, en ' + (isClase(j0?.tipo) ? 'Notas/Français A1.' : 'Notas/Grabaciones.')); } else { b.dataset.sure = '1'; b.textContent = 'Pulsa otra vez para descartar'; } }
     if (a === 'recover') { const r = await kv.get(BK); pill(''); if (r?.blob) { const job = { ...r.job, from: r.started, to: r.started + 1 }; if (await processFile(new File([r.blob], job.title + '.' + CL.extOf(r.blob.type), { type: r.blob.type }), job)) await kv.del(BK); } }
     if (a === 'forget') { await kv.del(BK); pill(''); }
   };
   pl.addEventListener('click', onCl); $('#clPanel').addEventListener('click', onCl);
   $('#clPanel').addEventListener('change', async e => {
     if (e.target.id === 'clDate') loadEvents();
+    if (e.target.id === 'clTipo') { clTipo = e.target.value; setTipo(clTipo); }
+    if (e.target.id === 'clEvSel') pickedEvent(clEv.events.find(x => ek(x) === e.target.value));
     if (e.target.id === 'clFileIn' && e.target.files[0]) {
       const f = e.target.files[0]; clFile = f;
       const d = await CL.mediaDuration(f).catch(() => 0), end = f.lastModified || Date.now();
@@ -1910,13 +1961,13 @@ function mountClase() {
     }
   });
   $('#ntClase').onclick = () => $('#clPanel').hidden ? openClase() : closeClase();
-  mountPlaud();
+  mountPlaud(); mountMeetWatch();
   // al volver: una clase a medio preparar o una grabación que se cortó
   setTimeout(async () => {
     const j = await kv.get(JOB).catch(() => null);
     if (j) { pillRetry(j, `«${j.title}»: la nota quedó a medio preparar (el audio ya está guardado).`); return; }
     const r = await kv.get(BK).catch(() => null);
-    if (r?.blob) pill(`<span>Hay una grabación de clase que se cortó (${esc(r.job?.title || '')}).</span><button class="btn" data-cl="recover">Recuperarla</button><button class="cl-link" data-cl="forget">Borrarla</button>`);
+    if (r?.blob) pill(`<span>Hay una grabación que se cortó (${esc(r.job?.title || '')}).</span><button class="btn" data-cl="recover">Recuperarla</button><button class="cl-link" data-cl="forget">Borrarla</button>`);
   }, 2500);
 }
 
@@ -1925,7 +1976,7 @@ function mountClase() {
    «Tipo de grabación» y «Fuente». Cada nota guarda además meta.grabacion (datos estructurados, listos para exportar a IRUSTA).
    Plaud: Zapier deja cada transcripción + resumen en Drive «06 PABE OS/Notas/Grabaciones/Plaud/»; PABE los recoge solo,
    crea la nota y mueve el archivo a «Plaud/Importados». */
-const GR_AREA = 'Grabaciones', GR_TIPO = 'gr-tipo', GR_FUENTE = 'gr-fuente', GR_TIPO_PROP = 'p_grtipo', GR_FUENTE_PROP = 'p_grfuente';
+const GR_AREA = 'Grabaciones', GR_TIPO = 'gr-tipo', GR_FUENTE = 'gr-fuente', GR_TIPO_PROP = 'p_grtipo', GR_FUENTE_PROP = 'p_grfuente', GR_CAL_PROP = 'p_grcal';
 const GR_TIPOS = ['clase de francés', 'reunión de trabajo', 'llamada telefónica', 'charla', 'otro'];
 const GR_FUENTES = ['PABE · grabación', 'PABE · importada', 'Plaud'];
 function ensureGrab() {
@@ -1934,6 +1985,7 @@ function ensureGrab() {
   const cus = col.cfg?.props || [], add = [];
   if (!cus.some(c => c.id === GR_TIPO_PROP)) add.push({ id: GR_TIPO_PROP, nombre: 'Tipo de grabación', tipo: 'tags', sistema: GR_TIPO });
   if (!cus.some(c => c.id === GR_FUENTE_PROP)) add.push({ id: GR_FUENTE_PROP, nombre: 'Fuente', tipo: 'tags', sistema: GR_FUENTE });
+  if (!cus.some(c => c.id === GR_CAL_PROP)) add.push({ id: GR_CAL_PROP, nombre: 'Evento (calendario)', tipo: 'url' });
   if (add.length) col.setCfg({ ...(col.cfg || {}), props: [...cus, ...add] });
 }
 const grTag = (sys, n) => { const t = tags.list(sys).find(x => nrm(x.nombre) === nrm(n)) || tags.add(sys, n, pickColor(sys)); return t.id; };
@@ -1941,7 +1993,7 @@ const grVals = (tipo, fuente) => ({ [GR_TIPO_PROP]: [grTag(GR_TIPO, GR_TIPOS.inc
 const grArea = () => areaIds([GR_AREA]);
 
 /* ---------- Plaud ---------- */
-const GR_SYS = `Eres el asistente de Patrick (arquitecto y empresario en San Sebastián; empresa I&S Homes). Recibes una grabación transcrita por Plaud (puede traer además un resumen de Plaud). Puede ser una reunión de trabajo, una llamada telefónica, una charla o una clase de francés. Devuelve SOLO un objeto JSON válido, sin texto alrededor:
+const GR_SYS = `Eres el asistente de Patrick (arquitecto y empresario en San Sebastián; empresa I&S Homes). Recibes la transcripción automática de una grabación (de Plaud, que puede traer además su propio resumen, o de Whisper, con marcas de tiempo [mm:ss]; puede tener errores de reconocimiento: corrígelos con sentido común). Puede ser una reunión de trabajo, una llamada telefónica, una charla o una clase de francés. Devuelve SOLO un objeto JSON válido, sin texto alrededor:
 {"tipo": "uno de: ${GR_TIPOS.join(', ')}",
  "titulo": "título corto y concreto en español (sin fecha)",
  "resumen": "resumen en español de 4–8 frases",
@@ -1950,18 +2002,19 @@ const GR_SYS = `Eres el asistente de Patrick (arquitecto y empresario en San Seb
  "tareas": [{"tarea": "qué hay que hacer", "responsable": "quién (o vacío)", "fecha": "cuándo, si se dijo (o vacío)"}],
  "preguntas": ["temas abiertos o dudas pendientes"],
  "participantes": ["nombres que aparecen"]}
-Reglas: «llamada telefónica» si es una conversación por teléfono; «charla» si es una ponencia, webinar o conferencia; «reunión de trabajo» para reuniones (presenciales u online); «clase de francés» si es una clase de francés. No inventes nada que no esté en la grabación.`;
-async function grSummary(text, nombre) {
-  const out = await agente.once({ system: GR_SYS, max_tokens: 8000, content: `Archivo: ${nombre}\n\n${text.length > 150000 ? text.slice(0, 150000) : text}` });
+Reglas: «llamada telefónica» si es una conversación por teléfono; «charla» si es una ponencia, webinar o conferencia; «reunión de trabajo» para reuniones (presenciales u online); «clase de francés» si es una clase de francés. Si se indica el tipo, respétalo. No inventes nada que no esté en la grabación.`;
+async function grSummary(text, nombre, extra = '') {
+  const out = await agente.once({ system: GR_SYS, max_tokens: 8000, content: `${extra ? extra + '\n' : ''}Archivo: ${nombre}\n\n${text.length > 150000 ? text.slice(0, 150000) : text}` });
   const m = out.match(/\{[\s\S]*\}/); if (!m) throw new Error('respuesta sin JSON');
   const j = JSON.parse(m[0]), arr = x => Array.isArray(x) ? x : x ? [x] : [];
   return { tipo: String(j.tipo || 'otro').toLowerCase(), titulo: String(j.titulo || nombre), resumen: String(j.resumen || ''), puntos: arr(j.puntos).map(String), decisiones: arr(j.decisiones).map(String), tareas: arr(j.tareas).filter(t => t && t.tarea), preguntas: arr(j.preguntas).map(String), participantes: arr(j.participantes).map(String) };
 }
-async function createRecordingNote({ ai, text, fecha, fuente, fileRef, origen }) {
+async function createRecordingNote({ ai, text, fecha, fuente, fileRef, more = [], origen, ev }) {
   ensureGrab();
   const t1 = gid(), t2 = gid(), it1 = [], X = 80, MW = 760;
-  if (fileRef) it1.push({ id: gid(), t: 'f', x: X, y: 40, f: fileRef });
-  let y = fileRef ? 130 : 40;
+  let y = 40;
+  for (const f of [fileRef, ...more].filter(Boolean)) { it1.push({ id: gid(), t: 'f', x: X, y, f }); y += 64; }
+  if (y > 40) y += 26;
   const block = s => { it1.push({ id: gid(), t: 'x', x: X, y: rd(y), s, kb: true, mw: MW }); y += textH(s) + 34; };
   const li = xs => xs.length ? xs.map(x => '• ' + x).join('\n') : '• —';
   block(`RESUMEN\n${ai.resumen || '—'}`);
@@ -1976,14 +2029,58 @@ async function createRecordingNote({ ai, text, fecha, fuente, fileRef, origen })
   const it2 = [{ id: gid(), t: 'x', x: X, y: 40, s: text, kb: true, mw: 900 }];
   const day = isoLocal(fecha), tipo = GR_TIPOS.includes(ai.tipo) ? ai.tipo : 'otro';
   const m = { id: gid(), title: `${ai.titulo} – ${day}`, titleManual: true, tags: [...grArea(), ...(tipo === 'clase de francés' ? frArea() : [])], tabs: [{ id: t1, name: 'Grabación' }, { id: t2, name: 'Transcripción' }],
-    created: fecha, updated: Date.now(), text: '', files: [], ink: false, valores: grVals(tipo, fuente),
-    grabacion: { v: 1, tipo, fuente, fecha: new Date(fecha).toISOString(), titulo: ai.titulo, resumen: ai.resumen, puntos: ai.puntos, decisiones: ai.decisiones, tareas: ai.tareas, preguntas: ai.preguntas, participantes: ai.participantes, archivo: fileRef ? { n: fileRef.n, drive: fileRef.id } : null, ...(origen || {}) } };
-  const doc = { tabs: { [t1]: it1, [t2]: it2 }, last: { tab: t1, id: it1[fileRef ? 1 : 0]?.id } };
+    created: fecha, updated: Date.now(), text: '', files: [], ink: false, valores: { ...grVals(tipo, fuente), ...(ev?.link ? { [GR_CAL_PROP]: ev.link } : {}) },
+    ...(ev ? { evento: { cal: ev.cal, id: ev.id, titulo: ev.summary, inicio: ev.start, fin: ev.end, link: ev.link } } : {}),
+    grabacion: { v: 1, tipo, fuente, fecha: new Date(fecha).toISOString(), titulo: ai.titulo, resumen: ai.resumen, puntos: ai.puntos, decisiones: ai.decisiones, tareas: ai.tareas, preguntas: ai.preguntas, participantes: ai.participantes, archivo: fileRef ? { n: fileRef.n, drive: fileRef.id } : null, ...(ev ? { evento: { titulo: ev.summary, inicio: new Date(ev.start).toISOString(), fin: new Date(ev.end).toISOString(), calendario: ev.calName, videollamada: ev.meet || '' } } : {}), ...(origen || {}) } };
+  const doc = { tabs: { [t1]: it1, [t2]: it2 }, last: { tab: t1, id: it1.find(i => i.t === 'x')?.id } };
   m.text = noteText(m, doc);
   m.files = it1.filter(i => i.f).map(i => ({ ...i.f, tab: t1, item: i.id }));
   await col.put(m, doc);
   return m;
 }
+/* ---------- reuniones, llamadas y charlas grabadas o importadas en PABE ---------- */
+function jobContext(job) {
+  const e = job.ev;
+  return [`Tipo indicado por Patrick: ${job.tipo}.`, e ? `Evento del calendario: «${e.summary}»${e.calName ? ' (calendario ' + e.calName + ')' : ''}, ${hm(e.start)}–${hm(e.end)}.` : '', e?.people?.length ? 'Invitados: ' + e.people.join(', ') + '.' : '', job.dur ? 'Duración: ' + CL.clock(job.dur) + '.' : ''].filter(Boolean).join(' ');
+}
+async function createMeetingNote(job) {
+  const txt = new File([`${job.title}${job.ev ? ' · ' + job.ev.summary : ''}\nDuración: ${CL.clock(job.dur || 0)}\n\n${job.transcript.text}\n`], job.title + ' – transcripción.txt', { type: 'text/plain' });
+  const txtRef = await files.add('notas', txt, GR_DIR);
+  const ai = { ...job.ai, tipo: job.tipo, titulo: (job.ev?.summary || job.ai.titulo).replace(/\s*–\s*\d{4}-\d{2}-\d{2}$/, ''), participantes: job.ai.participantes.length ? job.ai.participantes : (job.ev?.people || []) };
+  const m = await createRecordingNote({ ai, text: job.transcript.text, fecha: job.from || Date.now(), fuente: job.fuente || 'PABE · grabación', fileRef: job.audio, more: [txtRef], ev: job.ev });
+  if (job.ev && job.cal) { try { await CL.linkEvent({ id: job.cal }, { id: job.ev.id, description: job.ev.description, extendedProperties: { private: job.ev.priv } }, m.id, location.origin + location.pathname + '#notas/' + m.id); } catch (e) { console.warn('vincular evento', e); flash('Nota creada, pero no pude escribir el enlace en el evento del calendario'); } }
+  return m.id;
+}
+
+/* ---------- aviso «¿Grabar la reunión?» (ordenador) ----------
+   Cuando empieza un evento del calendario con videollamada (o una clase de «Français A1»), PABE pregunta una vez si se graba. */
+const ASKED = 'pabe:recAsked';
+let wEv = { day: '', at: 0, events: [] }, wShown = null;
+async function meetWatch() {
+  if (!CL.canRecord() || !gcal.ready || clRec || clBusy || !navigator.onLine) return;
+  const now = Date.now(), day = isoLocal(now);
+  if (wEv.day !== day || now - wEv.at > 10 * 60e3) { try { wEv = { day, at: now, events: (await CL.dayEvents(day)).events }; } catch (e) { return; } }
+  let asked = {}; try { asked = JSON.parse(localStorage.getItem(ASKED) || '{}'); } catch (e) {}
+  const key = e => ek(e) + '|' + CL.evStart(e);
+  const ev = wEv.events.find(e => e.start?.dateTime && (CL.meetLink(e) || e._cal.fr) && now >= CL.evStart(e) - 2 * 60e3 && now < Math.min(CL.evEnd(e), CL.evStart(e) + 15 * 60e3) && !asked[key(e)]);
+  const p = $('#clPill');
+  if (!ev || (p && !p.hidden) || !$('#clPanel')?.hidden) return;
+  asked[key(ev)] = now;
+  for (const k in asked) if (now - asked[k] > 2 * 864e5) delete asked[k];
+  try { localStorage.setItem(ASKED, JSON.stringify(asked)); } catch (e) {}
+  wShown = ev;
+  pill(`<span class="cl-dot"></span><span>Empieza «${esc((ev.summary || 'Reunión').slice(0, 50))}» (${hm(CL.evStart(ev))}). ¿Grabarla?</span><button class="btn" data-cl="wrec">Grabar</button><button class="cl-link" data-cl="wno">Ahora no</button>`);
+  if (document.hidden && 'Notification' in window && Notification.permission === 'granted') {
+    try { const n = new Notification(`¿Grabar «${ev.summary || 'la reunión'}»?`, { body: 'Vuelve a PABE y pulsa Grabar.', tag: 'pabe-rec' }); n.onclick = () => { window.focus(); n.close(); }; } catch (e) {}
+  }
+}
+function mountMeetWatch() {
+  if (!CL.canRecord()) return;
+  setTimeout(meetWatch, 5000);
+  setInterval(meetWatch, 30e3);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) meetWatch(); });
+}
+
 let plaudBusy = false, plaudDirs = null;
 async function plaudFolders() {
   if (plaudDirs) return plaudDirs;

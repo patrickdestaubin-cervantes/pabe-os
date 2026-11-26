@@ -1,5 +1,5 @@
 // PABE OS — con conexión usa siempre la última versión; sin conexión, la copia guardada
-const C = 'pabe-v62';
+const C = 'pabe-v63';
 const SHELL = ['./', 'index.html', 'css/pabe.css', 'css/calendario.css', 'js/app.js', 'js/ui.js', 'js/handfont.js', 'js/space.js', 'js/config.js', 'js/drive.js', 'js/supa.js', 'js/store.js', 'js/tabla.js', 'js/hoja.js', 'js/agente.js', 'js/modules/notas.js', 'js/modules/finanzas.js', 'js/modules/calendario.js', 'js/modules/dia.js', 'js/mano.js', 'js/gcal.js', 'js/clase.js', 'icon.svg', 'manifest.webmanifest'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(C).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(k => Promise.all(k.filter(x => x !== C).map(x => caches.delete(x)))).then(() => self.clients.claim())); });
