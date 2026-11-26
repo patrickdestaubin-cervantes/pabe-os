@@ -164,7 +164,8 @@ async function whisper(blob, name, key, prompt, retry = true) {
 }
 export const clock = t => { t = Math.max(0, Math.round(t)); const h = Math.floor(t / 3600), m = Math.floor(t / 60) % 60, s = t % 60, p = x => String(x).padStart(2, '0'); return (h ? h + ':' : '') + p(m) + ':' + p(s); };
 export function whisperError(e) {
-  if (e.code === 401) return 'La clave de OpenAI no es válida. Revísala en ⚙ del asistente.';
+  if (e.code === 401 && /sesi[oó]n/i.test(e.msg || '')) return 'Tu sesión de PABE ha caducado: recarga PABE (⟳) y reintenta.';
+  if (e.code === 401) return 'OpenAI dice que la clave no es válida' + (e.msg ? ' («' + e.msg.slice(0, 90) + '»)' : '') + '. Revísala en ⚙ del asistente.';
   if (e.code === 429) return 'OpenAI: sin saldo o demasiadas peticiones. Revisa el saldo en platform.openai.com y reintenta.';
   if (e.code === 413) return 'El audio es demasiado grande para Whisper.';
   if (e.code === 'red') return 'No pude llegar a Whisper (' + (e.msg || 'red') + '). Reintenta en un momento.';
