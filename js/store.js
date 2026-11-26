@@ -236,11 +236,12 @@ export const tags = {
 /* ---------- archivos adjuntos ---------- */
 // Se guardan en 06 PABE OS/<Módulo>/. Sin conexión se guardan aquí y se suben después.
 export const files = {
-  async add(colName, file) {
+  // dir (opcional): subcarpeta dentro de «06 PABE OS», p. ej. ['Notas', 'Français A1']
+  async add(colName, file, dir) {
     const localId = 'local:' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
     await blobs.set(localId, file);
     const ref = { id: localId, n: file.name, mime: file.type || 'application/octet-stream', sz: file.size };
-    const q = (await kv.get('files:queue')) || []; q.push({ localId, col: colName, name: file.name }); await kv.set('files:queue', q);
+    const q = (await kv.get('files:queue')) || []; q.push({ localId, col: colName, name: file.name, ...(dir ? { dir } : {}) }); await kv.set('files:queue', q);
     schedulePush(); return ref;
   },
   async realId(id) { if (!id.startsWith('local:')) return id; const m = (await kv.get('files:map')) || {}; return m[id] || null; },
@@ -270,7 +271,7 @@ export const files = {
     const map = (await kv.get('files:map')) || {};
     while (q.length) {
       const it = q[0], b = await blobs.get(it.localId);
-      if (b) { const dir = (it.col === 'finanzas' && space.finFolder()) || await folder([collection(it.col).label()]); const r = await drive.upload(b, { name: it.name, parents: [dir] }); map[it.localId] = r.id; await kv.set('files:map', map); emit('file', { localId: it.localId, id: r.id }); if (supa.signedIn) await upsertKV('file:' + it.localId, { id: r.id }, Date.now()).catch(() => {}); }
+      if (b) { const dir = (it.col === 'finanzas' && space.finFolder()) || await folder(it.dir || [collection(it.col).label()]); const r = await drive.upload(b, { name: it.name, parents: [dir] }); map[it.localId] = r.id; await kv.set('files:map', map); emit('file', { localId: it.localId, id: r.id }); if (supa.signedIn) await upsertKV('file:' + it.localId, { id: r.id }, Date.now()).catch(() => {}); }
       q.shift(); await kv.set('files:queue', q);
     }
   }

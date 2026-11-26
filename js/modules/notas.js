@@ -1,10 +1,12 @@
 // Módulo 1 — Notas: lienzo infinito (lápiz tipo Nebo, texto, archivos) + biblioteca con la Tabla PABE
-import { collection, tags, files, on, syncNow } from '../store.js';
+import { collection, tags, files, on, syncNow, kv } from '../store.js';
 import { createTable, pickColor, tagChip, PALETTE } from '../tabla.js';
 import { plainClick, fitPop } from '../ui.js';
 import { agente } from '../agente.js';
 import { loadHandFont } from '../handfont.js';
 import { space as who } from '../space.js';
+import { gcal } from '../gcal.js';
+import * as CL from '../clase.js';
 import { createSheet, importWorkbook, exportWorkbook, sheetFromRows, sheetTSV, newSheet, fmtVal } from '../hoja.js';
 const TXT = 18; // tamaño de letra estándar de todos los cuadros de texto
 
@@ -57,6 +59,7 @@ const HTML = `
  <button class="tl" id="ntShapes" aria-label="Reconocer formas"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="8.5" cy="8.5" r="4.5"/><rect x="12" y="12" width="8" height="8" rx="1"/></svg></button>
  <span class="sepr"></span>
  <label class="tl" title="Adjuntar archivo o imagen" aria-label="Adjuntar"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><path d="M20 11.5l-8 8a5 5 0 0 1-7-7l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7L9.7 17.2a1.7 1.7 0 0 1-2.4-2.4L15 7"/></svg><input type="file" id="ntFile" multiple hidden></label>
+ <button class="tl" id="ntClase" title="Grabar clase / webconferencia" aria-label="Grabar clase"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="3.6" fill="#e5484d" stroke="none"/></svg></button>
  <button class="tl" id="ntUndo" title="Deshacer (Ctrl+Z)" aria-label="Deshacer"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 7H4V2"/><path d="M4 7a8 8 0 1 1-1 7"/></svg></button>
  <button class="tl" id="ntCopy" title="Copiar (Ctrl+C)" aria-label="Copiar" hidden><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg></button>
  <button class="tl" id="ntCut" title="Cortar (Ctrl+X)" aria-label="Cortar" hidden><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><circle cx="6" cy="18" r="3"/><circle cx="18" cy="18" r="3"/><path d="M8.2 15.8L19 4M15.8 15.8L5 4"/></svg></button>
@@ -68,7 +71,8 @@ const HTML = `
 <div class="pop nt-penpop" id="ntPenPop" hidden></div>
 <div class="nt-menu" id="ntMenu" role="menu" hidden></div>
 <div class="nt-pager" id="ntPager" hidden><button data-pg="-1" aria-label="Página anterior">‹</button><span></span><button data-pg="1" aria-label="Página siguiente">›</button><button data-pg="x" aria-label="Salir de página a página">✕</button></div>
-<div class="nt-choose" id="ntChoose" hidden></div>`;
+<div class="nt-choose" id="ntChoose" hidden></div>
+<div class="cl-panel" id="clPanel" hidden></div>`;
 
 /* =================== guardado =================== */
 const items = () => cur.doc.tabs[cur.tab];
@@ -1545,6 +1549,7 @@ export async function mount(el, opts = {}) {
     syncTools();
   });
   $('#ntFile').onchange = e => { attach([...e.target.files]); e.target.value = ''; };
+  mountClase();
   $('#ntZoom').onclick = resetCam;
   $('#ntLib').onclick = e => { if (!plainClick(e)) return; e.preventDefault(); openLib(); }; $('#ntLibClose').onclick = closeLib; $('.nt-lib .scrim', el).onclick = closeLib;
 
@@ -1632,6 +1637,282 @@ export function route(sub) {
   pendingId = sub; // aún no ha llegado de la nube: se abre en cuanto llegue
 }
 export function leave() { flushXlsx(); saveNow(); hideMenu(); if (cur?.saved) { clearTimeout(hwT); transcribe(cur); } }
+
+/* =================== grabar clase / webconferencia (Français A1) ===================
+   Ordenador (Chrome): «Grabar clase» graba el audio de la pestaña elegida + el micrófono.
+   iPad y móvil: «Importar grabación» (vídeo de la grabación de pantalla o un audio).
+   El audio va a Drive «06 PABE OS/Notas/Français A1/», Whisper lo transcribe y Claude prepara la nota de la clase. */
+const FR = 'fr', FR_AREA = 'Français A1', FR_DIR = ['Notas', 'Français A1'];
+const FR_TAGS = ['vocabulaire', 'grammaire', 'conjugaison', 'prononciation', 'expressions', 'devoirs', 'à réviser', 'examen'];
+const FR_PROP = 'p_fr', FR_CAL_PROP = 'p_frcal';
+const JOB = 'clase:job', BK = 'clase:rec';
+let clRec = null, clBusy = false, clEv = { cal: null, events: [], pick: '' }, clFile = null, clRange = null, wake = null;
+const pad2 = n => String(n).padStart(2, '0');
+const isoLocal = d => { d = new Date(d); return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()); };
+const hm = t => new Date(t).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+const lessonTitle = (n, date) => `Leçon ${pad2(+n || 1)} – ${date}`;
+function nextLesson() {
+  const nums = col.list().map(m => +(/^le[çc]on\s+(\d+)/i.exec(m.title || '')?.[1] || 0));
+  return Math.max(0, ...nums) + 1;
+}
+const evNum = e => +(/(?:le[çc]on|lecci[oó]n|clase|cours|s[ée]ance)\s*n?[º°.]?\s*(\d+)/i.exec(e?.summary || '')?.[1] || 0);
+async function wakeOn() { try { wake = await navigator.wakeLock?.request('screen'); } catch (e) {} }
+function wakeOff() { try { wake?.release(); } catch (e) {} wake = null; }
+
+// Sistema de etiquetas «Français» y sus columnas en la biblioteca (se crean la primera vez que se usa)
+function ensureFrench() {
+  tags.system(FR, 'Français');
+  for (const n of FR_TAGS) if (!tags.list(FR).some(t => nrm(t.nombre) === nrm(n))) tags.add(FR, n, pickColor(FR));
+  const cus = col.cfg?.props || [], add = [];
+  if (!cus.some(c => c.id === FR_PROP)) add.push({ id: FR_PROP, nombre: 'Français', tipo: 'tags', sistema: FR });
+  if (!cus.some(c => c.id === FR_CAL_PROP)) add.push({ id: FR_CAL_PROP, nombre: 'Clase (calendario)', tipo: 'url' });
+  if (add.length) col.setCfg({ ...(col.cfg || {}), props: [...cus, ...add] });
+}
+const frIds = names => (names || []).map(n => tags.list(FR).find(t => nrm(t.nombre) === nrm(n))?.id).filter(Boolean);
+
+/* ---------- panel ---------- */
+function clPanelHtml() {
+  const rec = CL.canRecord(), mob = !rec;
+  return `<div class="cl-h"><b>Grabar clase / webconferencia</b><button class="ico" data-cl="close" aria-label="Cerrar">×</button></div>
+  <div class="cl-row"><label>Leçon<input id="clNum" inputmode="numeric" value="${nextLesson()}"></label><label>Fecha<input id="clDate" type="date" value="${isoLocal(Date.now())}"></label></div>
+  <div class="cl-ev" id="clEvBox"></div>
+  <div class="cl-warn" id="clKey" hidden></div>
+  ${clFile ? `<div class="cl-file"><span class="fic">${esc((clFile.name.split('.').pop() || '').slice(0, 4))}</span><span>${esc(clFile.name)}<small>${size(clFile.size)}</small></span></div><button class="btn cl-big" data-cl="go">Transcribir y crear la nota</button><button class="cl-link" data-cl="other">Elegir otro archivo</button>`
+    : `${rec ? `<button class="btn cl-big cl-recb" data-cl="rec"><i></i>Grabar clase</button><p class="cl-hint">Elige la pestaña de la clase (Zoom, Meet o Teams en Chrome) y marca <b>«Compartir también el audio de la pestaña»</b>. Tu micrófono también se graba. Puedes seguir usando PABE mientras tanto.</p>` : ''}
+  <label class="btn cl-big ${rec ? 'cl-sec' : ''}">Importar grabación<input type="file" id="clFileIn" accept="audio/*,video/*,.m4a,.mov,.mp4,.webm,.mp3,.wav" hidden></label>
+  <p class="cl-hint">${mob ? 'En el iPad o el móvil: graba la clase con la <b>Grabación de pantalla</b> (mantén pulsado el botón y activa el micrófono) y luego elige aquí el vídeo, o un audio de Notas de voz.' : 'O elige un vídeo o audio ya grabado.'}</p>`}`;
+}
+async function openClase() {
+  if (clRec) { flash('Ya se está grabando una clase'); return; }
+  if (clBusy) { flash('Se está preparando la nota de la clase anterior'); return; }
+  const p = $('#clPanel'); p.innerHTML = clPanelHtml(); p.hidden = false;
+  clRange = clFile ? clRange : { from: Date.now(), to: Date.now() + 3600e3 };
+  if (clFile) $('#clDate').value = isoLocal(clRange.to);
+  loadEvents(); checkKey();
+}
+function closeClase() { $('#clPanel').hidden = true; }
+async function checkKey() {
+  const k = await agente.openaiKey(), box = $('#clKey'); if (!box) return;
+  box.hidden = !!k;
+  if (!k) box.innerHTML = `Falta la clave de OpenAI (Whisper) para transcribir. <button class="cl-link" data-cl="key">Añadirla en ajustes</button><br><small>Puedes seguir igualmente: el audio se guarda y la nota se crea cuando añadas la clave.</small>`;
+}
+async function loadEvents() {
+  const box = $('#clEvBox'); if (!box) return;
+  const day = $('#clDate').value;
+  box.innerHTML = '<span class="mut">Buscando la clase en el calendario «Français A1»…</span>';
+  try { clEv = { ...(await CL.classEvents(day)), pick: '' }; } catch (e) { clEv = { cal: null, events: [], pick: '' }; }
+  if (!$('#clEvBox') || $('#clDate').value !== day) return;
+  if (!clEv.cal) { box.innerHTML = `<span class="mut">${gcalReady() ? 'No encuentro el calendario «Français A1».' : 'Conecta Google para vincular la nota al calendario.'}</span>`; return; }
+  const best = CL.bestEvent(clEv.events, clRange.from, clRange.to); clEv.pick = best?.id || '';
+  box.innerHTML = clEv.events.length ? `<label>Evento del calendario<select id="clEvSel">${clEv.events.map(e => `<option value="${esc(e.id)}" ${e.id === clEv.pick ? 'selected' : ''}>${esc(e.summary || 'Français A1')} · ${e.start?.dateTime ? hm(CL.evStart(e)) + '–' + hm(CL.evEnd(e)) : 'todo el día'}</option>`).join('')}<option value="">Sin vincular</option></select></label>` : '<span class="mut">No hay clase en «Français A1» ese día: la nota no se vinculará.</span>';
+  const n = evNum(best); if (n && $('#clNum')) $('#clNum').value = n;
+}
+const gcalReady = () => gcal.ready;
+function panelJob() {
+  const date = $('#clDate')?.value || isoLocal(Date.now()), num = +($('#clNum')?.value || nextLesson()) || nextLesson();
+  const sel = $('#clEvSel') ? $('#clEvSel').value : clEv.pick, ev = clEv.events.find(e => e.id === sel);
+  return { id: gid(), num, date, title: lessonTitle(num, date), cal: ev ? clEv.cal.id : null, ev: ev ? { id: ev.id, summary: ev.summary || '', start: CL.evStart(ev), end: CL.evEnd(ev), link: ev.htmlLink || '', description: ev.description || '', priv: ev.extendedProperties?.private || {} } : null };
+}
+
+/* ---------- barra de estado (grabando / preparando) ---------- */
+function pill(html) { const p = $('#clPill'); if (!p) return; p.hidden = !html; if (html) p.innerHTML = html; }
+let tickT = null;
+function recPill() {
+  clearInterval(tickT);
+  const draw = () => { if (!clRec) return clearInterval(tickT); const lv = clRec.level(); pill(`<span class="cl-dot" style="--lv:${Math.min(1, lv * 3).toFixed(2)}"></span><b>Grabando clase</b><span class="cl-t">${CL.clock(clRec.secs)}</span><button class="btn" data-cl="stop">Detener</button>`); };
+  draw(); tickT = setInterval(draw, 500);
+}
+function stepPill(t, extra = '') { pill(`<span class="cl-spin"></span><span>${esc(t)}</span>${extra}`); }
+
+/* ---------- grabar ---------- */
+async function startRec() {
+  const job = panelJob(); closeClase();
+  try {
+    clRec = await CL.startRecording({
+      onWarn: t => flash(t),
+      onEnd: () => { if (clRec) stopRec(); }, // dejaste de compartir la pestaña desde Chrome
+      onBackup: (b, started) => kv.set(BK, { blob: b, started, job }).catch(() => {}),
+    });
+  } catch (e) {
+    clRec = null;
+    if (e.code === 'sin-audio') flash('No se compartió audio ni hay micrófono: no se puede grabar.');
+    else if (e.name !== 'NotAllowedError' && e.name !== 'AbortError') flash('No se pudo empezar a grabar: ' + (e.message || e));
+    return;
+  }
+  clRec.job = job; clRange = { from: clRec.started, to: clRec.started };
+  window.addEventListener('beforeunload', recGuard);
+  recPill();
+}
+const recGuard = e => { e.preventDefault(); e.returnValue = ''; };
+async function stopRec() {
+  const r = clRec; if (!r || r.stopping) return; r.stopping = true;
+  clearInterval(tickT); stepPill('Cerrando la grabación…');
+  const blob = await r.stop(); clRec = null; window.removeEventListener('beforeunload', recGuard);
+  const job = { ...r.job, from: r.started, to: Date.now() };
+  // el evento se vuelve a elegir con la hora real de la grabación
+  if (job.cal) { try { const { cal, events } = await CL.classEvents(job.date); const ev = CL.bestEvent(events, job.from, job.to); if (ev) job.ev = { id: ev.id, summary: ev.summary || '', start: CL.evStart(ev), end: CL.evEnd(ev), link: ev.htmlLink || '', description: ev.description || '', priv: ev.extendedProperties?.private || {} }; job.cal = cal?.id || job.cal; } catch (e) {} }
+  const file = new File([blob], job.title + '.' + CL.extOf(blob.type), { type: blob.type });
+  // la copia de seguridad solo se borra cuando el audio ya está guardado (si no, se puede recuperar al volver)
+  if (await processFile(file, job)) kv.del(BK).catch(() => {});
+}
+
+/* ---------- procesar: guardar audio → transcribir → nota ---------- */
+// Devuelve true en cuanto el audio queda guardado (en el dispositivo y en cola para Drive)
+async function processFile(file, job, rt) {
+  let saved = false;
+  clBusy = true; wakeOn();
+  try {
+    let prep;
+    try { stepPill('Preparando el audio…'); prep = await CL.prepareAudio(file, t => stepPill(t)); }
+    catch (e) {
+      if (e.code !== 'realtime') throw e;
+      clBusy = false; wakeOff();
+      pill(`<span>Este vídeo es demasiado grande para extraer el audio de golpe en este dispositivo. Puedo escucharlo en tiempo real (tarda lo que dura la grabación; deja PABE abierto y la pantalla encendida).</span><button class="btn" data-cl="rt">Empezar</button><button class="cl-link" data-cl="cancel">Cancelar</button>`);
+      clRt = { file, job }; return;
+    }
+    if (rt) prep.save = file;
+    const ext = prep.saveExt || (file.name.split('.').pop() || CL.extOf(file.type)).toLowerCase();
+    const audio = new File([prep.save], job.title + '.' + ext, { type: prep.save.type || file.type });
+    stepPill('Guardando el audio en Drive…');
+    job.audio = await files.add('notas', audio, FR_DIR); job.dur = prep.duration || 0;
+    if (!job.from) { job.to = file.lastModified || Date.now(); job.from = job.to - (job.dur || 3600) * 1000; }
+    await kv.set(JOB, job); saved = true; syncNow();
+    await runJob(job, prep.chunks);
+  } catch (e) { console.error(e); if (!saved) pill(`<span>No se pudo preparar el audio: ${esc(e.message || e)}</span><button class="cl-link" data-cl="dismiss">Cerrar</button>`); }
+  finally { clBusy = false; wakeOff(); }
+  return saved;
+}
+let clRt = null;
+function startRealtime() {
+  const { file, job } = clRt; clRt = null;
+  const p = CL.realtimeExtract(file, (t, d) => stepPill(`Escuchando la grabación… ${CL.clock(t)} de ${CL.clock(d || 0)}`, '<button class="cl-link" data-cl="rtstop">Cancelar</button>'));
+  clRtP = p; wakeOn();
+  p.then(b => { clRtP = null; if (b.size < 2000) throw new Error('vacío'); return processFile(new File([b], job.title + '.' + CL.extOf(b.type), { type: b.type }), job, true); })
+    .catch(e => { clRtP = null; wakeOff(); if (e.code === 'cancel') { pill(''); flash('Cancelado: no se ha creado ninguna nota'); return; } pill(`<span>No se pudo escuchar la grabación (${esc(e.message || e)}).</span><button class="cl-link" data-cl="dismiss">Cerrar</button>`); });
+}
+let clRtP = null;
+async function runJob(job, chunks) {
+  clBusy = true; wakeOn();
+  try {
+    if (!job.transcript) {
+      const key = await agente.openaiKey();
+      if (!key) { pillRetry(job, 'El audio está guardado. Falta la clave de OpenAI (Whisper) para transcribir.', true); return; }
+      if (!chunks) { stepPill('Recuperando el audio…'); const u = await files.url(job.audio.id); if (!u) throw new Error('No encuentro el audio guardado'); const b = await (await fetch(u)).blob(); chunks = (await CL.prepareAudio(new File([b], job.audio.n, { type: b.type || job.audio.mime }), t => stepPill(t))).chunks; }
+      try { job.transcript = await CL.transcribe(chunks, key, t => stepPill(t)); }
+      catch (e) { pillRetry(job, CL.whisperError(e)); return; }
+      await kv.set(JOB, job);
+    }
+    if (!job.ai) {
+      stepPill('Preparando la nota de la clase…');
+      if (!(await agente.ensureKey())) { pillRetry(job, 'Transcripción lista. Falta la clave de Claude para preparar la nota.', true); return; }
+      try { job.ai = await classSummary(job); } catch (e) { console.error(e); pillRetry(job, 'Claude no pudo preparar la nota (' + (e.message || e) + ').'); return; }
+      await kv.set(JOB, job);
+    }
+    stepPill('Creando la nota…');
+    const id = await createClassNote(job);
+    await kv.del(JOB);
+    const here = active() && (!cur || !cur.saved || isBlank());
+    pill(`<span>✓ ${esc(job.title)} lista${job.ev ? ' y vinculada a la clase del calendario' : ''}</span>${here ? '' : `<a class="btn" href="#notas/${id}" data-cl="dismiss">Abrir nota</a>`}<button class="cl-link" data-cl="dismiss">Cerrar</button>`);
+    if (here) { await openNote(id); setTimeout(() => { if ($('#clPill')?.textContent.includes(job.title)) pill(''); }, 8000); }
+  } catch (e) { console.error(e); pillRetry(job, 'Algo falló: ' + (e.message || e)); }
+  finally { clBusy = false; wakeOff(); }
+}
+function pillRetry(job, msg, key) {
+  pill(`<span>${esc(msg)}</span>${key ? '<button class="cl-link" data-cl="key">Ajustes</button>' : ''}<button class="btn" data-cl="retry">Reintentar</button><button class="cl-link" data-cl="drop">Descartar</button>`);
+}
+
+/* ---------- Claude: de la transcripción a la nota ---------- */
+const AI_SYS = `Eres el profesor particular de francés de Patrick, hispanohablante (vive en San Sebastián) que estudia francés nivel A1 en clases online. Recibes la transcripción automática (Whisper, con marcas de tiempo) de una clase: mezcla francés y español, puede tener errores de reconocimiento; corrígelos con sentido común y no inventes contenidos que no se trataron.
+Devuelve SOLO un objeto JSON válido (sin texto alrededor ni bloques de código) con esta forma:
+{"tema": "tema de la clase, corto, en francés",
+ "resume": "resumen de la clase en español, 4–8 frases, con los términos franceses entre comillas",
+ "vocabulaire": [{"fr": "palabra o expresión en francés (con artículo si es sustantivo)", "es": "traducción", "exemple": "frase de ejemplo sencilla en francés"}],
+ "grammaire": ["cada punto de gramática o conjugación explicado en español, con ejemplos en francés; para verbos, la conjugación completa en una línea: je suis, tu es, il/elle est…"],
+ "phrases": [{"fr": "frase útil en francés", "es": "traducción"}],
+ "devoirs": ["deberes que mandó el profesor (vacío si no hubo)"],
+ "questions": ["dudas que quedaron poco claras o errores repetidos de Patrick, como preguntas para el profesor en francés sencillo, con la traducción entre paréntesis"],
+ "etiquetas": ["de esta lista, las que apliquen: ${FR_TAGS.join(', ')}"]}
+Reglas de etiquetas: vocabulaire si se trabajó vocabulario; grammaire si hubo gramática; conjugaison si se conjugaron verbos; prononciation si se practicó pronunciación; expressions si hubo expresiones o frases hechas; devoirs si hay deberes; à réviser si hay puntos difíciles o dudas; examen si se habló de un examen o prueba.
+Incluye todo el vocabulario nuevo de la clase (normalmente 10–40 entradas).`;
+async function classSummary(job) {
+  const tx = job.transcript.text.length > 150000 ? job.transcript.text.slice(0, 150000) : job.transcript.text;
+  const out = await agente.once({ system: AI_SYS, max_tokens: 12000, content: `Clase: ${job.title}${job.ev ? ' (' + job.ev.summary + ')' : ''}. Duración: ${CL.clock(job.dur || 0)}.\n\nTRANSCRIPCIÓN:\n${tx}` });
+  const m = out.match(/\{[\s\S]*\}/); if (!m) throw new Error('respuesta sin JSON');
+  const j = JSON.parse(m[0]);
+  const arr = x => Array.isArray(x) ? x : x ? [x] : [];
+  return { tema: String(j.tema || ''), resume: String(j.resume || ''), vocabulaire: arr(j.vocabulaire).filter(v => v && v.fr), grammaire: arr(j.grammaire).map(String), phrases: arr(j.phrases).filter(p => p && p.fr), devoirs: arr(j.devoirs).map(String).filter(Boolean), questions: arr(j.questions).map(String).filter(Boolean), etiquetas: arr(j.etiquetas).map(String) };
+}
+
+/* ---------- crear la nota ---------- */
+function textH(s, cpl = 78) { return String(s).split('\n').reduce((n, l) => n + Math.max(1, Math.ceil(l.length / cpl)), 0) * TXT * 1.35 + 8; }
+async function createClassNote(job) {
+  ensureFrench();
+  const a = job.ai, t1 = gid(), t2 = gid(), it1 = [], it2 = [], X = 80, MW = 760;
+  const txtFile = new File([`${job.title}${job.ev ? ' · ' + job.ev.summary : ''}\nDuración: ${CL.clock(job.dur || 0)}\n\n${job.transcript.text}\n`], job.title + ' – transcription.txt', { type: 'text/plain' });
+  const txtRef = await files.add('notas', txtFile, FR_DIR);
+  it1.push({ id: gid(), t: 'f', x: X, y: 40, f: job.audio }, { id: gid(), t: 'f', x: X, y: 104, f: txtRef });
+  let y = 190;
+  const block = s => { it1.push({ id: gid(), t: 'x', x: X, y: rd(y), s, kb: true, mw: MW }); y += textH(s) + 34; };
+  const li = xs => xs.length ? xs.map(x => '• ' + x).join('\n') : '• —';
+  block(`RÉSUMÉ${a.tema ? ' · ' + a.tema : ''}\n${a.resume || '—'}`);
+  const pES = 'p_' + gid(), pEx = 'p_' + gid();
+  it1.push({ id: gid(), t: 'tb', x: X, y: rd(y), w: MW, n: 'Vocabulaire', props: [{ id: pES, nombre: 'Español', tipo: 'text' }, { id: pEx, nombre: 'Exemple', tipo: 'text' }], prefs: { names: { title: 'Français' } },
+    rows: a.vocabulaire.map(v => ({ id: gid(), title: String(v.fr), created: Date.now(), valores: { [pES]: String(v.es || ''), [pEx]: String(v.exemple || '') } })) });
+  y += 250 + Math.max(1, a.vocabulaire.length) * 52;
+  block(`GRAMMAIRE / CONJUGAISON\n${li(a.grammaire)}`);
+  block(`PHRASES UTILES\n${li(a.phrases.map(p => p.fr + (p.es ? ' — ' + p.es : '')))}`);
+  block(`DEVOIRS\n${li(a.devoirs)}`);
+  block(`QUESTIONS POUR LE PROF\n${li(a.questions)}`);
+  it2.push({ id: gid(), t: 'x', x: X, y: 40, s: job.transcript.text, kb: true, mw: 900 });
+  const m = { id: gid(), title: job.title, titleManual: true, tags: areaIds([FR_AREA]), tabs: [{ id: t1, name: 'Clase' }, { id: t2, name: 'Transcription' }],
+    created: job.from || Date.now(), updated: Date.now(), text: '', files: [], ink: false,
+    valores: { [FR_PROP]: frIds(a.etiquetas), ...(job.ev?.link ? { [FR_CAL_PROP]: job.ev.link } : {}) },
+    ...(job.ev ? { evento: { cal: job.cal, id: job.ev.id, titulo: job.ev.summary, inicio: job.ev.start, fin: job.ev.end, link: job.ev.link } } : {}) };
+  const doc = { tabs: { [t1]: it1, [t2]: it2 }, last: { tab: t1, id: it1[2]?.id } };
+  m.text = noteText(m, doc);
+  m.files = [...it1, ...it2].filter(i => i.f).map(i => ({ ...i.f, tab: t1, item: i.id }));
+  await col.put(m, doc);
+  if (job.ev && job.cal) { try { await CL.linkEvent({ id: job.cal }, { id: job.ev.id, description: job.ev.description, extendedProperties: { private: job.ev.priv } }, m.id, location.origin + location.pathname + '#notas/' + m.id); } catch (e) { console.warn('vincular evento', e); flash('Nota creada, pero no pude escribir el enlace en el evento del calendario'); } }
+  return m.id;
+}
+
+function mountClase() {
+  const pl = document.createElement('div'); pl.id = 'clPill'; pl.className = 'cl-pill'; pl.hidden = true; document.body.appendChild(pl);
+  const onCl = async e => {
+    const b = e.target.closest('[data-cl]'); if (!b) return; const a = b.dataset.cl;
+    if (a === 'close') closeClase();
+    if (a === 'rec') startRec();
+    if (a === 'stop') stopRec();
+    if (a === 'go') { const f = clFile, job = panelJob(); job.from = clRange.from; job.to = clRange.to; clFile = null; closeClase(); processFile(f, job); }
+    if (a === 'other') { clFile = null; openClase(); }
+    if (a === 'key') { agente.settings('Pega tu clave de OpenAI (Whisper) para transcribir las clases.'); }
+    if (a === 'rt') startRealtime();
+    if (a === 'rtstop') { clRtP?.cancel(); }
+    if (a === 'cancel' || a === 'dismiss') { clRt = null; pill(''); }
+    if (a === 'retry') { const j = await kv.get(JOB); if (j) runJob(j); else pill(''); }
+    if (a === 'drop') { if (b.dataset.sure) { await kv.del(JOB); pill(''); flash('Descartada. El audio sigue en Drive, en Notas/Français A1.'); } else { b.dataset.sure = '1'; b.textContent = 'Pulsa otra vez para descartar'; } }
+    if (a === 'recover') { const r = await kv.get(BK); pill(''); if (r?.blob) { const job = { ...r.job, from: r.started, to: r.started + 1 }; if (await processFile(new File([r.blob], job.title + '.' + CL.extOf(r.blob.type), { type: r.blob.type }), job)) await kv.del(BK); } }
+    if (a === 'forget') { await kv.del(BK); pill(''); }
+  };
+  pl.addEventListener('click', onCl); $('#clPanel').addEventListener('click', onCl);
+  $('#clPanel').addEventListener('change', async e => {
+    if (e.target.id === 'clDate') loadEvents();
+    if (e.target.id === 'clFileIn' && e.target.files[0]) {
+      const f = e.target.files[0]; clFile = f;
+      const d = await CL.mediaDuration(f).catch(() => 0), end = f.lastModified || Date.now();
+      clRange = { from: end - (d || 3600) * 1000, to: end };
+      openClase();
+    }
+  });
+  $('#ntClase').onclick = () => $('#clPanel').hidden ? openClase() : closeClase();
+  // al volver: una clase a medio preparar o una grabación que se cortó
+  setTimeout(async () => {
+    const j = await kv.get(JOB).catch(() => null);
+    if (j) { pillRetry(j, `«${j.title}»: la nota quedó a medio preparar (el audio ya está guardado).`); return; }
+    const r = await kv.get(BK).catch(() => null);
+    if (r?.blob) pill(`<span>Hay una grabación de clase que se cortó (${esc(r.job?.title || '')}).</span><button class="btn" data-cl="recover">Recuperarla</button><button class="cl-link" data-cl="forget">Borrarla</button>`);
+  }, 2500);
+}
 
 /* =================== herramientas para el asistente =================== */
 const fmt = new Intl.DateTimeFormat('es-ES', { day: 'numeric', month: 'short', year: 'numeric' });

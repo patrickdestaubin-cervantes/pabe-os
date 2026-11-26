@@ -521,3 +521,29 @@ path.mk{mix-blend-mode:multiply}@media (prefers-color-scheme:dark){path.mk{mix-b
 .nt-sharepop .pad{padding:4px 6px;font-size:12px}.nt-sharepop .btn{width:100%;margin-top:6px}
 /* «Mi letra»: los cuadros de texto se ven con la letra del usuario (fuente fabricada con su alfabeto); .kb = letra de teclado */
 html.mano-font .tx:not(.kb){font-family:'PabeMano',var(--font,system-ui),sans-serif;letter-spacing:.01em}
+
+/* ---------- Notas · Grabar clase / webconferencia ---------- */
+.cl-panel{position:absolute;z-index:31;right:max(16px,env(safe-area-inset-right));bottom:calc(70px + env(safe-area-inset-bottom));width:min(380px,calc(100% - 32px));max-height:calc(100% - 150px);overflow:auto;background:var(--pop);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);padding:12px 14px 14px;display:flex;flex-direction:column;gap:10px;font-size:14px}
+.cl-h{display:flex;align-items:center;justify-content:space-between;gap:8px}.cl-h b{font-weight:600}
+.cl-h .ico{width:36px;height:36px;border-radius:8px;font-size:20px;color:var(--mut)}
+.cl-row{display:flex;gap:10px}.cl-row label{flex:1}
+.cl-panel label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--mut)}
+.cl-panel input:not([type=file]),.cl-panel select{height:40px;border:1px solid var(--line);border-radius:8px;padding:0 10px;background:var(--bg);color:var(--ink);font:inherit;font-size:15px;width:100%;min-width:0}
+.cl-panel input:focus,.cl-panel select:focus{outline:2px solid var(--sel);outline-offset:-1px}
+.cl-ev .mut{color:var(--mut);font-size:13px}
+.cl-big{height:46px;border-radius:10px;font-size:15px;display:flex;align-items:center;justify-content:center;gap:8px;cursor:pointer;width:100%}
+.cl-recb i{width:12px;height:12px;border-radius:50%;background:#e5484d;box-shadow:0 0 0 3px rgba(229,72,77,.25)}
+.cl-panel label.cl-big{flex-direction:row;font-size:15px;color:var(--bg)}
+.cl-panel label.cl-sec,.cl-sec{background:var(--soft);color:var(--ink);border:1px solid var(--line)}
+.cl-warn .cl-link{min-height:0;padding:0;font-size:13px}
+.cl-hint{margin:-4px 2px 0;font-size:12px;line-height:1.45;color:var(--mut)}.cl-hint b{color:var(--ink);font-weight:500}
+.cl-warn{font-size:13px;line-height:1.45;padding:8px 10px;border-radius:8px;background:color-mix(in srgb,#ffc53d 16%,transparent);color:var(--ink)}.cl-warn small{color:var(--mut)}
+.cl-link{color:var(--sel);font-size:13px;min-height:36px;padding:0 6px;background:none}
+.cl-file{display:flex;align-items:center;gap:10px;padding:8px;border:1px solid var(--line);border-radius:10px}.cl-file span:last-child{display:flex;flex-direction:column;overflow:hidden;text-overflow:ellipsis;word-break:break-all}.cl-file small{color:var(--mut)}
+.cl-file .fic{flex:none;width:38px;height:38px;border-radius:8px;background:var(--soft);display:grid;place-items:center;font-size:11px;text-transform:uppercase;color:var(--mut)}
+.cl-pill{position:fixed;z-index:60;top:calc(10px + env(safe-area-inset-top));left:50%;transform:translateX(-50%);max-width:min(620px,calc(100vw - 32px));display:flex;align-items:center;flex-wrap:wrap;gap:8px 10px;padding:8px 10px 8px 14px;background:var(--pop);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow);font-size:14px;line-height:1.4}
+.cl-pill .btn{height:36px;display:inline-flex;align-items:center;text-decoration:none}
+.cl-pill .cl-t{font-variant-numeric:tabular-nums;color:var(--mut)}
+.cl-dot{width:12px;height:12px;border-radius:50%;background:#e5484d;box-shadow:0 0 0 calc(2px + var(--lv,0) * 7px) rgba(229,72,77,.22);transition:box-shadow .2s}
+.cl-spin{width:14px;height:14px;border-radius:50%;border:2px solid var(--line);border-top-color:var(--sel);animation:clspin .8s linear infinite;flex:none}@keyframes clspin{to{transform:rotate(360deg)}}
+@media (max-width:600px){.cl-panel{left:8px;right:8px;width:auto;bottom:calc(70px + env(safe-area-inset-bottom));max-height:calc(100% - 130px)}.cl-pill{top:auto;bottom:calc(76px + env(safe-area-inset-bottom));left:8px;right:8px;transform:none;max-width:none}.cl-pill .btn,.cl-link{min-height:44px}.cl-big{height:48px}}
