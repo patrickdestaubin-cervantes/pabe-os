@@ -50,6 +50,10 @@ export const agente = {
   register(id, def) { modules[id] = def; },
   setCurrent(fn) { currentModule = fn; },
   hasKey: () => !!L.get('key', ''),
+  // Clave de OpenAI (Whisper) para transcribir grabaciones de clase. Se guarda como la de Claude (zona privada del Drive).
+  openaiKey: async () => { if (!L.get('oai', '')) await pullSettings(); return L.get('oai', ''); },
+  // Abre el asistente con sus ajustes (p. ej. para pegar una clave que falta)
+  settings: msg => { $('#agPanel').hidden = false; renderLog(); openSettings(msg || ''); },
   ensureKey: async () => { if (!L.get('key', '')) await pullSettings(); if (!L.get('key', '')) await sharedKey(); return !!L.get('key', ''); },
   // Una sola petición a Claude (sin herramientas), p. ej. para leer letra a mano en una imagen
   async once({ content, system = '', max_tokens = 2000, model }) {
@@ -174,18 +178,20 @@ function openSettings(msg = '') {
   s.innerHTML = `<h3>Ajustes del asistente</h3>
    <label>Clave de la API de Claude<input id="agKey" type="password" autocomplete="off" placeholder="sk-ant-…" value="${esc(L.get('key', ''))}"></label>
    <p class="ag-small">Se guarda en una zona privada de tu Drive que solo puede leer PABE, para que funcione en todos tus dispositivos. Créala en console.anthropic.com → API Keys. No la compartas con nadie (tampoco en un chat).</p>
+   <label>Clave de OpenAI (Whisper) <small>· para transcribir clases grabadas</small><input id="agOai" type="password" autocomplete="off" placeholder="sk-…" value="${esc(L.get('oai', ''))}"></label>
+   <p class="ag-small">Opcional. Créala en platform.openai.com → API keys. Se guarda igual que la de Claude.</p>
    <label>Modelo<select id="agModel">${MODELS.map(m => `<option value="${m[0]}" ${L.get('model', MODELS[0][0]) === m[0] ? 'selected' : ''}>${m[1]}</option>`).join('')}</select></label>
    <label class="ag-row"><input type="checkbox" id="agVoice" ${L.get('voice', true) ? 'checked' : ''}> Responder en voz alta cuando pregunto con el micrófono</label>
    <p class="ag-err">${esc(msg)}</p>
    <div class="ag-btns"><button class="ag-sec" id="agClear">Borrar conversación</button><button class="ag-pri" id="agSave">Guardar</button></div>`;
-  $('#agSave').onclick = async () => { L.set('key', $('#agKey').value.trim()); L.set('model', $('#agModel').value); L.set('voice', $('#agVoice').checked); s.hidden = true; await pushSettings(); shareKey(); };
+  $('#agSave').onclick = async () => { L.set('key', $('#agKey').value.trim()); L.set('oai', $('#agOai').value.trim()); L.set('model', $('#agModel').value); L.set('voice', $('#agVoice').checked); s.hidden = true; await pushSettings(); shareKey(); };
   $('#agClear').onclick = () => { msgs = []; L.set('msgs', msgs); renderLog(); s.hidden = true; };
 }
 
 /* ---------- ajustes compartidos entre dispositivos (zona privada de la app en tu Drive) ---------- */
 async function pushSettings() {
   if (!drive.ready) return;
-  try { await drive.appSet('asistente.json', { key: L.get('key', ''), model: L.get('model', MODELS[0][0]), voice: L.get('voice', true), updated: Date.now() }); L.set('synced', Date.now()); } catch (e) { console.warn('ajustes asistente', e); }
+  try { await drive.appSet('asistente.json', { key: L.get('key', ''), oai: L.get('oai', ''), model: L.get('model', MODELS[0][0]), voice: L.get('voice', true), updated: Date.now() }); L.set('synced', Date.now()); } catch (e) { console.warn('ajustes asistente', e); }
 }
 // La clave de Claude de Patrick la usan también las personas con acceso a PABE (p. ej. Berna)
 async function sharedKey() {
@@ -200,7 +206,7 @@ export async function pullSettings() {
   if (!drive.ready) return;
   try {
     const r = await drive.appGet('asistente.json');
-    if (r && r.key && (r.updated || 0) >= (L.get('synced', 0) || 0)) { L.set('key', r.key); if (r.model) L.set('model', r.model); if (r.voice != null) L.set('voice', r.voice); L.set('synced', r.updated || Date.now()); }
+    if (r && r.key && (r.updated || 0) >= (L.get('synced', 0) || 0)) { L.set('key', r.key); if (r.model) L.set('model', r.model); if (r.voice != null) L.set('voice', r.voice); if (r.oai != null) L.set('oai', r.oai); L.set('synced', r.updated || Date.now()); }
     else if (!r && L.get('key', '')) await pushSettings();
   } catch (e) { console.warn('ajustes asistente', e); }
   if (!L.get('key', '')) await sharedKey(); else shareKey();

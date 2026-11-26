@@ -79,12 +79,24 @@ export const drive = {
   },
 
   async upload(blob, meta, id) {
+    if (blob.size > 5e6) return this.uploadBig(blob, meta, id);
     const boundary = 'pabe' + Math.random().toString(36).slice(2);
     const body = new Blob([`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(meta)}\r\n--${boundary}\r\nContent-Type: ${blob.type || 'application/octet-stream'}\r\n\r\n`, blob, `\r\n--${boundary}--`]);
     const url = id ? `${UP}/files/${id}?uploadType=multipart&supportsAllDrives=true&fields=id,name,mimeType,size,webViewLink,modifiedTime`
       : `${UP}/files?uploadType=multipart&supportsAllDrives=true&fields=id,name,mimeType,size,webViewLink,modifiedTime`;
     const r = await this.req(url, { method: id ? 'PATCH' : 'POST', headers: { 'Content-Type': 'multipart/related; boundary=' + boundary }, body });
     return r.json();
+  },
+
+  // Archivos grandes (grabaciones de clase, vídeos…): subida «reanudable» de Drive, la recomendada por encima de 5 MB
+  async uploadBig(blob, meta, id) {
+    const f = 'fields=id,name,mimeType,size,webViewLink,modifiedTime';
+    const url = id ? `${UP}/files/${id}?uploadType=resumable&supportsAllDrives=true&${f}` : `${UP}/files?uploadType=resumable&supportsAllDrives=true&${f}`;
+    const r = await this.req(url, { method: id ? 'PATCH' : 'POST', headers: { 'Content-Type': 'application/json; charset=UTF-8', 'X-Upload-Content-Type': blob.type || 'application/octet-stream', 'X-Upload-Content-Length': String(blob.size) }, body: JSON.stringify(meta || {}) });
+    const loc = r.headers.get('Location'); if (!loc) throw new Error('drive resumable');
+    const up = await fetch(loc, { method: 'PUT', headers: { 'Content-Type': blob.type || 'application/octet-stream' }, body: blob });
+    if (!up.ok) throw Object.assign(new Error('drive ' + up.status), { code: up.status });
+    return up.json();
   },
 
   async writeJSON(name, parent, data, id) {
