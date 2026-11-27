@@ -1980,7 +1980,7 @@ function mountClase() {
    crea la nota y mueve el archivo a «Plaud/Importados». */
 const GR_AREA = 'Grabaciones', GR_TIPO = 'gr-tipo', GR_FUENTE = 'gr-fuente', GR_TIPO_PROP = 'p_grtipo', GR_FUENTE_PROP = 'p_grfuente', GR_CAL_PROP = 'p_grcal';
 const GR_TIPOS = ['clase de francés', 'reunión de trabajo', 'llamada telefónica', 'charla', 'otro'];
-const GR_FUENTES = ['PABE · grabación', 'PABE · importada', 'Plaud'];
+const GR_FUENTES = ['PABE · grabación', 'PABE · importada', 'Plaud', 'Cube ACR'];
 function ensureGrab() {
   tags.system(GR_TIPO, 'Tipo de grabación'); tags.system(GR_FUENTE, 'Fuente de grabación');
   for (const [s, list] of [[GR_TIPO, GR_TIPOS], [GR_FUENTE, GR_FUENTES]]) for (const n of list) if (!tags.list(s).some(t => nrm(t.nombre) === nrm(n))) tags.add(s, n, pickColor(s));
@@ -2120,11 +2120,79 @@ async function plaudScan() {
   } catch (e) { console.warn('plaud', e); if ($('#clPill')?.textContent.startsWith('Plaud:')) pill(''); }
   finally { plaudBusy = false; }
 }
+
+/* ---------- llamadas del móvil (Cube ACR) ----------
+   El móvil sube cada llamada grabada a Drive «06 PABE OS/Notas/Grabaciones/Llamadas/» (Autosync o similar).
+   PABE la transcribe con Whisper, crea la nota (tipo «llamada telefónica», fuente «Cube ACR») y marca el archivo en Drive
+   como hecho (appProperties.pabe), sin moverlo, para que la app de sincronización no lo vuelva a subir. */
+const CALL_EXT = /\.(m4a|mp3|aac|ogg|oga|opus|wav|webm|mp4|flac|amr|3gp|3ga)$/i;
+let callBusy = false, callDir = null, callWarned = false;
+async function callFolder() {
+  if (callDir) return callDir;
+  const notas = await drive.findOrCreateFolder('Notas', CONFIG.rootFolder), gr = await drive.findOrCreateFolder('Grabaciones', notas);
+  return (callDir = await drive.findOrCreateFolder('Llamadas', gr));
+}
+// Fecha de la llamada: la del nombre del archivo (Cube ACR la pone), si no, la del archivo
+function callDate(name, f) {
+  const m = /(20\d{2})[-_.]?(\d{2})[-_.]?(\d{2})[\sT_.-]*(\d{2})[-_.:h]?(\d{2})(?:[-_.:]?(\d{2}))?/.exec(name);
+  if (m) { const d = new Date(+m[1], m[2] - 1, +m[3], +m[4], +m[5], +(m[6] || 0)).getTime(); if (d && Math.abs(d - Date.now()) < 400 * 864e5) return d; }
+  return Math.min(Date.parse(f.modifiedTime) || Infinity, Date.parse(f.createdTime) || Infinity, Date.now());
+}
+// Contacto según el nombre del archivo (lo que queda al quitar la fecha y prefijos)
+const callWho = name => name.replace(/\.[^.]+$/, '').replace(/[\s_@-]*(20\d{2})[-_.]?\d{2}[-_.]?\d{2}.*$/, '').replace(/^(call|llamada|cube|rec(ording)?)[\s_@-]*/i, '').replace(/[_@]+/g, ' ').replace(/\s+/g, ' ').trim();
+const callMark = (f, v) => drive.req(`https://www.googleapis.com/drive/v3/files/${f.id}?supportsAllDrives=true`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ appProperties: { pabe: v, pabeAt: String(Date.now()) } }) }).catch(e => console.warn('marcar llamada', e));
+async function callScan() {
+  if (callBusy || plaudBusy || clBusy || clRec || !who.isOwner || !drive.ready || !navigator.onLine) return;
+  callBusy = true;
+  try {
+    const key = await agente.openaiKey(); if (!key || !(await agente.ensureKey())) return;
+    const dir = await callFolder();
+    // la primera vez solo se recogen las llamadas de la última semana (no todo el historial)
+    let since = await kv.get('llamadas:desde'); if (!since) { since = Date.now() - 7 * 864e5; await kv.set('llamadas:desde', since); }
+    const list = (await drive.list(`'${dir}' in parents and trashed=false and mimeType!='application/vnd.google-apps.folder' and createdTime > '${new Date(since).toISOString()}'`, 'files(id,name,mimeType,createdTime,modifiedTime,size,appProperties)'))
+      .filter(f => CALL_EXT.test(f.name) || /^(audio|video)\//.test(f.mimeType)).sort((a, b) => a.createdTime < b.createdTime ? -1 : 1);
+    let n = 0;
+    for (const f of list) {
+      const ap = f.appProperties || {};
+      if (['hecho', 'formato', 'corta'].includes(ap.pabe) || (ap.pabe === 'proc' && Date.now() - +ap.pabeAt < 30 * 60e3) || (ap.pabe === 'error' && Date.now() - +ap.pabeAt < 2 * 3600e3)) continue; // proc reciente: otro dispositivo la está preparando
+      if (col.list().some(m => m.grabacion?.llamada === f.id)) { await callMark(f, 'hecho'); continue; }
+      if (/\.(amr|3gp|3ga)$/i.test(f.name)) { await callMark(f, 'formato'); if (!callWarned) { callWarned = true; flash('Hay llamadas grabadas en AMR/3GP, que no se pueden transcribir. En Cube ACR elige el formato M4A.'); } continue; }
+      if (+f.size && +f.size < 12000) { await callMark(f, 'corta'); continue; } // unos segundos: sin contenido útil
+      await callMark(f, 'proc');
+      const quien = callWho(f.name), lbl = `Llamada${quien ? ' con ' + quien : ''}`;
+      try {
+        stepPill(`${lbl}: descargando…`);
+        const b = await drive.readBlob(f.id);
+        const file = new File([b], f.name, { type: b.type || f.mimeType });
+        let prep;
+        try { prep = await CL.prepareAudio(file, t => stepPill(`${lbl}: ${t}`)); }
+        catch (e) { if (e.code === 'realtime') { await callMark(f, 'formato'); continue; } throw e; }
+        const tr = await CL.transcribe(prep.chunks, key, t => stepPill(`${lbl}: ${t}`));
+        if (tr.text.replace(/\[\d+:\d+\]/g, '').trim().length < 20) { await callMark(f, 'corta'); continue; }
+        stepPill(`${lbl}: preparando la nota…`);
+        const ai = await grSummary(tr.text, f.name, `Tipo indicado: llamada telefónica (grabada en el móvil de Patrick con Cube ACR). Contacto según el nombre del archivo: ${quien || 'desconocido'}. Duración: ${CL.clock(prep.duration || 0)}.`);
+        if (col.list().some(m => m.grabacion?.llamada === f.id)) { await callMark(f, 'hecho'); continue; } // otro dispositivo se adelantó
+        ai.tipo = 'llamada telefónica';
+        await createRecordingNote({ ai, text: tr.text, fecha: callDate(f.name, f), fuente: 'Cube ACR', fileRef: { id: f.id, n: f.name, mime: f.mimeType, sz: +f.size || 0 }, origen: { llamada: f.id, contacto: quien } });
+        await callMark(f, 'hecho'); n++;
+      } catch (e) {
+        console.warn('llamada', f.name, e); await callMark(f, 'error');
+        pill(`<span>No pude preparar la ${esc(lbl.toLowerCase())}: ${esc(e.code ? CL.whisperError(e) : (e.message || e))} Lo intento de nuevo en un par de horas.</span><button class="cl-link" data-cl="dismiss">Cerrar</button>`);
+        return;
+      }
+    }
+    if (n) { pill(`<span>✓ ${n === 1 ? 'Nueva llamada en Notas' : n + ' llamadas nuevas en Notas'} (área Grabaciones)</span><a class="btn" href="#notas/todas" data-cl="dismiss">Ver</a><button class="cl-link" data-cl="dismiss">Cerrar</button>`); syncNow(); }
+  } catch (e) { console.warn('llamadas', e); if (/^Llamada/.test($('#clPill')?.textContent || '')) pill(''); }
+  finally { callBusy = false; }
+}
+
+// Bandejas de entrada de grabaciones en Drive: Plaud y llamadas del móvil
+async function inboxScan() { await plaudScan(); await callScan(); }
 function mountPlaud() {
-  setTimeout(plaudScan, 8000);
-  setInterval(plaudScan, 5 * 60000);
-  drive.onAuth(ok => { if (ok) setTimeout(plaudScan, 3000); });
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) setTimeout(plaudScan, 1500); });
+  setTimeout(inboxScan, 8000);
+  setInterval(inboxScan, 5 * 60000);
+  drive.onAuth(ok => { if (ok) setTimeout(inboxScan, 3000); });
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) setTimeout(inboxScan, 1500); });
 }
 
 /* =================== compartir a PABE desde otras apps ===================
