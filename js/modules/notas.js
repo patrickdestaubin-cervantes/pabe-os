@@ -1635,6 +1635,8 @@ let pendingId = null;
 export function route(sub) {
   if (sub === 'nueva') return enter();
   if (sub === 'todas') return openLib();
+  if (sub === 'compartido') return takeShared();
+  if (sub === 'compartido/error') { history.replaceState(null, '', '#notas'); enter(); flash('No he podido recibir lo compartido (¿archivo demasiado grande?). Prueba otra vez o adjúntalo con el clip.'); return; }
   if (col.index.get(sub)) { pendingId = null; return openNote(sub); }
   pendingId = sub; // aún no ha llegado de la nube: se abre en cuanto llegue
 }
@@ -1961,7 +1963,7 @@ function mountClase() {
     }
   });
   $('#ntClase').onclick = () => $('#clPanel').hidden ? openClase() : closeClase();
-  mountPlaud(); mountMeetWatch();
+  mountPlaud(); mountMeetWatch(); mountShare();
   // al volver: una clase a medio preparar o una grabación que se cortó
   setTimeout(async () => {
     const j = await kv.get(JOB).catch(() => null);
@@ -2191,6 +2193,112 @@ function mountPlaud() {
   setInterval(inboxScan, 5 * 60000);
   drive.onAuth(ok => { if (ok) setTimeout(inboxScan, 3000); });
   document.addEventListener('visibilitychange', () => { if (!document.hidden) setTimeout(inboxScan, 1500); });
+}
+
+/* =================== compartir a PABE desde otras apps ===================
+   Dos caminos, el mismo resultado (una nota nueva con lo compartido, área «Compartido»):
+   1) Android y ordenador (Chrome/Edge con PABE instalado): PABE sale en el menú «Compartir». El service worker (sw.js)
+      recibe lo compartido, lo guarda un momento en la caché «pabe-share» y abre #notas/compartido → takeShared().
+   2) iPad, iPhone y Mac (Safari no deja que una web salga en «Compartir»): el atajo «PABE» guarda lo compartido en
+      Drive «06 PABE OS/Notas/Compartir con PABE/»; PABE lo recoge solo (shareScan), crea la nota y lo mueve a «Importados». */
+const SH_AREA = 'Compartido', SH_DIR = ['Notas', 'Compartido'], SH_CACHE = 'pabe-share';
+const shBase = n => String(n || '').replace(/\.[^.]+$/, '').replace(/[_]+/g, ' ').trim();
+const isUrl = s => /^https?:\/\/\S+$/i.test(String(s || '').trim());
+// Texto suelto de un archivo .txt / .url / .webloc (lo que guarda el atajo cuando compartes un enlace o un texto)
+function linkFromFile(name, body) {
+  if (/\.webloc$/i.test(name)) return (body.match(/<string>([^<]+)<\/string>/) || [])[1] || '';
+  if (/\.url$/i.test(name)) return (body.match(/^URL=(.+)$/m) || [])[1] || '';
+  return body;
+}
+const isTextish = (name, mime, size) => size < 50e3 && (/\.(txt|url|webloc)$/i.test(name) || /^text\/plain/.test(mime || ''));
+const linkTitle = u => { try { const x = new URL(u); if (/docs\.google\.com$/.test(x.hostname)) return { spreadsheets: 'Hoja de Google', document: 'Documento de Google', presentation: 'Presentación de Google' }[x.pathname.split('/')[1]] || 'Enlace de Google'; return x.hostname.replace(/^www\./, ''); } catch (e) { return ''; } };
+// Crea la nota: primero el texto o enlace, luego los archivos (imágenes y archivos en columna, cada PDF en su columna)
+async function sharedNote({ id, title = '', texts = [], refs = [], fecha = Date.now(), origen = {} }) {
+  const t = gid(), list = [], X = 80, MW = 760;
+  let y = 40, px = X + MW + 80;
+  const body = texts.map(s => String(s || '').trim()).filter(Boolean).filter((s, i, a) => a.indexOf(s) === i).join('\n\n');
+  if (body) { const it = { id: gid(), t: 'x', x: X, y, s: body, kb: true, mw: MW }; list.push(it); y += textH(body) + 40; }
+  for (const { ref, url } of refs) {
+    const img = /^image\//i.test(ref.mime || '') || /\.(png|jpe?g|gif|webp|svg|heic|heif)$/i.test(ref.n);
+    if (img) { const u = url || await files.url(ref.id).catch(() => null); if (u) urlCache.set(ref.id, u); const d = u ? await imgDim(u) : { w: 440, h: 330 }, w = Math.min(MW, d.w); list.push({ id: gid(), t: 'i', x: X, y: rd(y), w: rd(w), f: ref }); y += w * d.h / d.w + 40; }
+    else if (/\.pdf$/i.test(ref.n) || ref.mime === 'application/pdf') { list.push({ id: gid(), t: 'pdf', x: px, y: 40, w: 600, f: ref }); px += 680; }
+    else { list.push({ id: gid(), t: 'f', x: X, y: rd(y), f: ref }); y += 64; }
+  }
+  const first = refs[0]?.ref.n, link = texts.find(isUrl);
+  title = String(title || '').trim() || (first ? shBase(first) : '') || (link ? linkTitle(link) : '') || String(body).split('\n')[0].slice(0, 60) || 'Compartido';
+  const m = { id: id || gid(), title, titleManual: true, tags: areaIds([SH_AREA]), tabs: [{ id: t, name: 'Hoja 1' }], created: fecha, updated: Date.now(), text: '', files: [], ink: false, valores: {}, compartido: { fecha: new Date(fecha).toISOString(), ...origen } };
+  const doc = { tabs: { [t]: list }, last: { tab: t, id: list[0]?.id } };
+  m.text = noteText(m, doc);
+  m.files = list.filter(i => i.f).map(i => ({ ...i.f, tab: t, item: i.id }));
+  await col.put(m, doc); syncNow();
+  return m;
+}
+// 1) Lo que llega del menú «Compartir» (Android / ordenador)
+let shTaking = false;
+async function takeShared() {
+  if (shTaking || !('caches' in self)) return; shTaking = true;
+  try {
+    const c = await caches.open(SH_CACHE), keys = await c.keys(), metas = keys.filter(k => k.url.endsWith('/meta'));
+    let last = null;
+    for (const k of metas) {
+      const meta = await (await c.match(k)).json(), refs = [], texts = [meta.text, meta.url];
+      for (const f of meta.files || []) {
+        const r = await c.match(f.key); if (!r) continue;
+        const file = new File([await r.blob()], f.name, { type: f.type || 'application/octet-stream' });
+        if (isTextish(file.name, file.type, file.size)) { texts.push(linkFromFile(file.name, await file.text())); continue; }
+        refs.push({ ref: await files.add('notas', file, SH_DIR), url: URL.createObjectURL(file) });
+      }
+      // Android a veces manda el enlace dentro del texto («Mira esto https://…»): se deja tal cual
+      last = await sharedNote({ title: meta.title, texts, refs, fecha: meta.at || Date.now(), origen: { fuente: 'compartir' } });
+      await Promise.all([c.delete(k), ...(meta.files || []).map(f => c.delete(f.key))]);
+    }
+    if (last) { await openNote(last.id); flash(metas.length > 1 ? metas.length + ' notas creadas con lo compartido' : 'Guardado en PABE · nota nueva'); }
+    else if (location.hash === '#notas/compartido') { history.replaceState(null, '', '#notas'); if (!cur) enter(); }
+  } catch (e) { console.warn('compartir', e); flash('No he podido guardar lo compartido: ' + (e.message || e)); }
+  finally { shTaking = false; }
+}
+// 2) La carpeta de Drive del atajo (iPad / iPhone / Mac)
+let shBusy = false, shDirs = null;
+async function shareFolders() {
+  if (shDirs) return shDirs;
+  const notas = await drive.findOrCreateFolder('Notas', CONFIG.rootFolder), inb = await drive.findOrCreateFolder('Compartir con PABE', notas);
+  return (shDirs = { inb, done: await drive.findOrCreateFolder('Importados', inb) });
+}
+async function shareScan() {
+  if (shBusy || !who.isOwner || !drive.ready || !navigator.onLine) return;
+  shBusy = true;
+  try {
+    const { inb, done } = await shareFolders();
+    const list = (await drive.list(`'${inb}' in parents and trashed=false and mimeType!='application/vnd.google-apps.folder'`, 'files(id,name,mimeType,createdTime,size,webViewLink)')).sort((a, b) => a.createdTime < b.createdTime ? -1 : 1);
+    if (!list.length) return;
+    const seen = new Set(col.list().flatMap(m => m.compartido?.drive || []));
+    const move = f => drive.req(`https://www.googleapis.com/drive/v3/files/${f.id}?addParents=${done}&removeParents=${inb}&supportsAllDrives=true`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: '{}' }).catch(e => console.warn('mover compartido', e));
+    // lo guardado a la vez (varias fotos de una sola vez) va a la misma nota
+    const groups = [];
+    for (const f of list) { if (seen.has(f.id)) { await move(f); continue; } const g = groups[groups.length - 1], t = Date.parse(f.createdTime); if (g && t - g.t < 90e3) { g.fs.push(f); g.t = t; } else groups.push({ t, fs: [f] }); }
+    let made = [];
+    for (const g of groups) {
+      const texts = [], refs = [];
+      for (const f of g.fs) {
+        if (isTextish(f.name, f.mimeType, +f.size || 0)) { try { texts.push(linkFromFile(f.name, await (await drive.req(`https://www.googleapis.com/drive/v3/files/${f.id}?alt=media&supportsAllDrives=true`)).text())); continue; } catch (e) { console.warn(e); } }
+        if (/^application\/vnd\.google-apps/.test(f.mimeType)) { texts.push(f.webViewLink || ''); continue; }
+        refs.push({ ref: { id: f.id, n: f.name, mime: f.mimeType, sz: +f.size || 0 } });
+      }
+      // id fijo sacado del archivo de Drive: si dos dispositivos lo recogen a la vez, escriben la misma nota (no salen duplicadas)
+      const nid = 'sh' + g.fs[0].id.replace(/[^A-Za-z0-9]/g, '').toLowerCase().slice(0, 24);
+      if (col.index.get(nid) || col.list().some(m => (m.compartido?.drive || []).some(id => g.fs.some(f => f.id === id)))) { for (const f of g.fs) await move(f); continue; } // otro dispositivo se adelantó
+      made.push(await sharedNote({ id: nid, texts, refs, fecha: g.t, origen: { fuente: 'atajo', drive: g.fs.map(f => f.id) } }));
+      for (const f of g.fs) await move(f);
+    }
+    if (made.length) pill(`<span>✓ ${made.length === 1 ? `«${esc(made[0].title.slice(0, 40))}» guardado en Notas` : made.length + ' cosas compartidas guardadas en Notas'}</span><a class="btn" href="#notas/${made.length === 1 ? made[0].id : 'todas'}" data-cl="dismiss">Ver</a><button class="cl-link" data-cl="dismiss">Cerrar</button>`);
+  } catch (e) { console.warn('compartir (Drive)', e); }
+  finally { shBusy = false; }
+}
+function mountShare() {
+  setTimeout(shareScan, 6000);
+  setInterval(shareScan, 2 * 60000);
+  drive.onAuth(ok => { if (ok) setTimeout(shareScan, 2000); });
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) setTimeout(shareScan, 1000); });
 }
 
 /* =================== herramientas para el asistente =================== */
