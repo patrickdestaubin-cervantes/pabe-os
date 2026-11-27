@@ -1636,6 +1636,7 @@ export function route(sub) {
   if (sub === 'nueva') return enter();
   if (sub === 'todas') return openLib();
   if (sub === 'compartido') return takeShared();
+  if (sub === 'compartido/error') { history.replaceState(null, '', '#notas'); enter(); flash('No he podido recibir lo compartido (¿archivo demasiado grande?). Prueba otra vez o adjúntalo con el clip.'); return; }
   if (col.index.get(sub)) { pendingId = null; return openNote(sub); }
   pendingId = sub; // aún no ha llegado de la nube: se abre en cuanto llegue
 }
@@ -2144,20 +2145,20 @@ function linkFromFile(name, body) {
 const isTextish = (name, mime, size) => size < 50e3 && (/\.(txt|url|webloc)$/i.test(name) || /^text\/plain/.test(mime || ''));
 const linkTitle = u => { try { const x = new URL(u); if (/docs\.google\.com$/.test(x.hostname)) return { spreadsheets: 'Hoja de Google', document: 'Documento de Google', presentation: 'Presentación de Google' }[x.pathname.split('/')[1]] || 'Enlace de Google'; return x.hostname.replace(/^www\./, ''); } catch (e) { return ''; } };
 // Crea la nota: primero el texto o enlace, luego los archivos (imágenes y archivos en columna, cada PDF en su columna)
-async function sharedNote({ title = '', texts = [], refs = [], fecha = Date.now(), origen = {} }) {
+async function sharedNote({ id, title = '', texts = [], refs = [], fecha = Date.now(), origen = {} }) {
   const t = gid(), list = [], X = 80, MW = 760;
   let y = 40, px = X + MW + 80;
   const body = texts.map(s => String(s || '').trim()).filter(Boolean).filter((s, i, a) => a.indexOf(s) === i).join('\n\n');
   if (body) { const it = { id: gid(), t: 'x', x: X, y, s: body, kb: true, mw: MW }; list.push(it); y += textH(body) + 40; }
   for (const { ref, url } of refs) {
-    const img = /^image\/(png|jpe?g|gif|webp|svg)/i.test(ref.mime || '') || /\.(png|jpe?g|gif|webp|svg)$/i.test(ref.n);
+    const img = /^image\//i.test(ref.mime || '') || /\.(png|jpe?g|gif|webp|svg|heic|heif)$/i.test(ref.n);
     if (img) { const u = url || await files.url(ref.id).catch(() => null); if (u) urlCache.set(ref.id, u); const d = u ? await imgDim(u) : { w: 440, h: 330 }, w = Math.min(MW, d.w); list.push({ id: gid(), t: 'i', x: X, y: rd(y), w: rd(w), f: ref }); y += w * d.h / d.w + 40; }
     else if (/\.pdf$/i.test(ref.n) || ref.mime === 'application/pdf') { list.push({ id: gid(), t: 'pdf', x: px, y: 40, w: 600, f: ref }); px += 680; }
     else { list.push({ id: gid(), t: 'f', x: X, y: rd(y), f: ref }); y += 64; }
   }
   const first = refs[0]?.ref.n, link = texts.find(isUrl);
   title = String(title || '').trim() || (first ? shBase(first) : '') || (link ? linkTitle(link) : '') || String(body).split('\n')[0].slice(0, 60) || 'Compartido';
-  const m = { id: gid(), title, titleManual: true, tags: areaIds([SH_AREA]), tabs: [{ id: t, name: 'Hoja 1' }], created: fecha, updated: Date.now(), text: '', files: [], ink: false, valores: {}, compartido: { fecha: new Date(fecha).toISOString(), ...origen } };
+  const m = { id: id || gid(), title, titleManual: true, tags: areaIds([SH_AREA]), tabs: [{ id: t, name: 'Hoja 1' }], created: fecha, updated: Date.now(), text: '', files: [], ink: false, valores: {}, compartido: { fecha: new Date(fecha).toISOString(), ...origen } };
   const doc = { tabs: { [t]: list }, last: { tab: t, id: list[0]?.id } };
   m.text = noteText(m, doc);
   m.files = list.filter(i => i.f).map(i => ({ ...i.f, tab: t, item: i.id }));
@@ -2215,8 +2216,10 @@ async function shareScan() {
         if (/^application\/vnd\.google-apps/.test(f.mimeType)) { texts.push(f.webViewLink || ''); continue; }
         refs.push({ ref: { id: f.id, n: f.name, mime: f.mimeType, sz: +f.size || 0 } });
       }
-      if (col.list().some(m => (m.compartido?.drive || []).some(id => g.fs.some(f => f.id === id)))) { for (const f of g.fs) await move(f); continue; } // otro dispositivo se adelantó
-      made.push(await sharedNote({ texts, refs, fecha: g.t, origen: { fuente: 'atajo', drive: g.fs.map(f => f.id) } }));
+      // id fijo sacado del archivo de Drive: si dos dispositivos lo recogen a la vez, escriben la misma nota (no salen duplicadas)
+      const nid = 'sh' + g.fs[0].id.replace(/[^A-Za-z0-9]/g, '').toLowerCase().slice(0, 24);
+      if (col.index.get(nid) || col.list().some(m => (m.compartido?.drive || []).some(id => g.fs.some(f => f.id === id)))) { for (const f of g.fs) await move(f); continue; } // otro dispositivo se adelantó
+      made.push(await sharedNote({ id: nid, texts, refs, fecha: g.t, origen: { fuente: 'atajo', drive: g.fs.map(f => f.id) } }));
       for (const f of g.fs) await move(f);
     }
     if (made.length) pill(`<span>✓ ${made.length === 1 ? `«${esc(made[0].title.slice(0, 40))}» guardado en Notas` : made.length + ' cosas compartidas guardadas en Notas'}</span><a class="btn" href="#notas/${made.length === 1 ? made[0].id : 'todas'}" data-cl="dismiss">Ver</a><button class="cl-link" data-cl="dismiss">Cerrar</button>`);

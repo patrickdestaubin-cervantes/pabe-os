@@ -18,6 +18,6 @@ async function shareIn(req) {
     const fs = fd.getAll('files').filter(f => f && typeof f === 'object' && 'size' in f), meta = { at: Date.now(), title: fd.get('title') || '', text: fd.get('text') || '', url: fd.get('url') || '', files: [] };
     for (let i = 0; i < fs.length; i++) { const key = base + i; await c.put(key, new Response(fs[i])); meta.files.push({ key, name: fs[i].name || 'archivo', type: fs[i].type || '' }); }
     await c.put(base + 'meta', new Response(JSON.stringify(meta), { headers: { 'Content-Type': 'application/json' } }));
-  } catch (e) { console.warn('compartir', e); }
+  } catch (e) { console.warn('compartir', e); return Response.redirect(new URL('./#notas/compartido/error', self.registration.scope).href, 303); }
   return Response.redirect(home, 303);
 }
