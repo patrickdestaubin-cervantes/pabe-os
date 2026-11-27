@@ -9,3 +9,4 @@ Sistema operativo personal de Patrick, organizado por módulos. Web estática (G
 - **Calendario (en pruebas)**: `calendario.html` — conectado a Google Calendar de la cuenta personal (`js/gcal.js`), vistas día/semana/mes y Tabla PABE.
 
 Reglas completas: documento «PABE_OS_reglas_y_arquitectura» del proyecto PABE OS en Claude.
+- **Compartir a PABE** desde cualquier app → nota nueva (área «Compartido»). Android/Windows: `share_target` del manifest + `sw.js`. iPad/iPhone/Mac: atajo que guarda en Drive «06 PABE OS/Notas/Compartir con PABE/». Guía: `COMPARTIR.md`.
